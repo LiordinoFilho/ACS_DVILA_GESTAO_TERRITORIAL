@@ -4,6 +4,7 @@ import fs from 'fs';
 import cookieParser from 'cookie-parser';
 import { google } from 'googleapis';
 import { createServer as createViteServer } from 'vite';
+import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 const PORT = 3000;
@@ -66,7 +67,8 @@ const SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/userinfo.email',
-  'https://www.googleapis.com/auth/userinfo.profile'
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/drive.file'
 ];
 
 // In-memory store for visit status updates and local event overrides
@@ -394,6 +396,35 @@ async function getGoogleContactGroupsMap(people: any) {
   return groupMap;
 }
 
+function normalizeDateToISO(dateStr: string): string {
+  if (!dateStr) return '';
+  const clean = dateStr.trim();
+
+  // Match YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) return clean;
+
+  // Match DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const brMatch = clean.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})$/);
+  if (brMatch) {
+    const day = brMatch[1].padStart(2, '0');
+    const month = brMatch[2].padStart(2, '0');
+    const year = brMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  // Match DD/MM/YY
+  const brShortMatch = clean.match(/^(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{2})$/);
+  if (brShortMatch) {
+    const day = brShortMatch[1].padStart(2, '0');
+    const month = brShortMatch[2].padStart(2, '0');
+    let year = parseInt(brShortMatch[3], 10);
+    year = year > 25 ? 1900 + year : 2000 + year;
+    return `${year}-${month}-${day}`;
+  }
+
+  return clean;
+}
+
 function parseBiographiesText(notes: string) {
   let cns = '';
   let cpf = '';
@@ -405,33 +436,53 @@ function parseBiographiesText(notes: string) {
 
   if (!notes) return { cns, cpf, birthDate, motherName, gender, microarea, addressComplement };
 
-  const lines = notes.split('\n');
+  const lines = notes.split(/\r?\n/);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    const match = trimmed.match(/^([^:=]+)[:=]+\s*(.+)$/i);
+    // Direct check for Birth Date anywhere in line
+    if (!birthDate) {
+      const birthMatch = trimmed.match(/(?:DATA\s+DE\s+NASCIMENTO|DATA\s+NASC|NASCIMENTO|NASC\.?|D\.?N\.?|DOB|ANIVERS[ÁA]RIO)[:=.\s\-]*(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/i);
+      if (birthMatch) {
+        birthDate = normalizeDateToISO(birthMatch[1]);
+      }
+    }
+
+    const match = trimmed.match(/^([^:=]+)[:=]+\s*(.+)$/i) || trimmed.match(/^([A-ZÀ-Ú\s.]{2,20})\s+([0-9A-Z/.-]+.*)$/i);
     if (match) {
       const key = match[1].trim().toUpperCase();
       const val = match[2].trim();
 
-      if (key.includes('CNS')) {
-        cns = val;
-      } else if (key.includes('CPF')) {
-        cpf = val;
-      } else if (key.includes('NASCIMENTO') || key.includes('DATA NASC') || key === 'DOB' || key === 'DATA DE NASCIMENTO') {
-        birthDate = val;
-      } else if (key.includes('MÃE') || key.includes('MAE') || key.includes('NOME DA MÃE') || key.includes('NOME DA MAE')) {
+      if (!cns && (key.includes('CNS') || key.includes('CARTAO SUS') || key.includes('SUS'))) {
+        const cnsMatch = val.match(/\d{15}/);
+        cns = cnsMatch ? cnsMatch[0] : val;
+      } else if (!cpf && key.includes('CPF')) {
+        const cpfMatch = val.match(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/);
+        cpf = cpfMatch ? cpfMatch[0] : val;
+      } else if (!birthDate && (key.includes('NASC') || key.includes('DN') || key.includes('DOB') || key.includes('ANIVERS') || key.includes('NASCIMENTO'))) {
+        const dMatch = val.match(/(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}|\d{4}-\d{2}-\d{2})/);
+        if (dMatch) birthDate = normalizeDateToISO(dMatch[1]);
+        else birthDate = normalizeDateToISO(val);
+      } else if (!motherName && (key.includes('MÃE') || key.includes('MAE'))) {
         motherName = val;
-      } else if (key.includes('GÊNERO') || key.includes('GENERO') || key.includes('SEXO')) {
+      } else if (!gender && (key.includes('GÊNERO') || key.includes('GENERO') || key.includes('SEXO'))) {
         if (/fem/i.test(val) || val.toUpperCase() === 'F' || val.toUpperCase() === 'FEMININO') gender = 'F';
         else if (/masc/i.test(val) || val.toUpperCase() === 'M' || val.toUpperCase() === 'MASCULINO') gender = 'M';
         else gender = 'Outro';
-      } else if (key.includes('MICROÁREA') || key.includes('MICROAREA') || key === 'MICRO AREA') {
+      } else if (!microarea && (key.includes('MICROÁREA') || key.includes('MICROAREA') || key.includes('MICRO AREA') || key === 'MA')) {
         microarea = val;
-      } else if (key.includes('COMPLEMENTO') || key.includes('CASA')) {
+      } else if (!addressComplement && (key.includes('COMPLEMENTO') || key.includes('CASA'))) {
         addressComplement = val;
       }
+    }
+  }
+
+  // Fallback: If birthDate still empty, look for any standalone date in notes
+  if (!birthDate) {
+    const standaloneMatch = notes.match(/\b(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{4})\b/);
+    if (standaloneMatch) {
+      birthDate = normalizeDateToISO(standaloneMatch[1]);
     }
   }
 
@@ -615,7 +666,7 @@ app.get('/api/contacts', async (req, res) => {
         resourceName: 'people/me',
         pageSize: 1000,
         pageToken,
-        personFields: 'names,emailAddresses,phoneNumbers,addresses,memberships,userDefined,biographies,photos,organizations,urls,events'
+        personFields: 'names,emailAddresses,phoneNumbers,addresses,memberships,userDefined,biographies,photos,organizations,urls,events,birthdays'
       });
 
       if (response.data?.connections) {
@@ -642,6 +693,20 @@ app.get('/api/contacts', async (req, res) => {
       let cpf = parsedFromNotes.cpf;
       let microarea = parsedFromNotes.microarea;
       let birthDate = parsedFromNotes.birthDate;
+
+      // Extract native Google Contacts birthday if missing from notes
+      if (!birthDate && person.birthdays && person.birthdays.length > 0) {
+        const b = person.birthdays[0];
+        if (b.date) {
+          const y = b.date.year || 1990;
+          const m = String(b.date.month || 1).padStart(2, '0');
+          const d = String(b.date.day || 1).padStart(2, '0');
+          birthDate = `${y}-${m}-${d}`;
+        } else if (b.text) {
+          birthDate = normalizeDateToISO(b.text);
+        }
+      }
+
       let motherName = parsedFromNotes.motherName;
       let gender = parsedFromNotes.gender;
       let healthProfile: any = undefined;
@@ -1183,6 +1248,109 @@ app.post('/api/cache/backup', (req, res) => {
   }
 });
 
+// GOOGLE DRIVE AUTOMATIC BACKUP & RESTORE ENDPOINTS
+const DRIVE_BACKUP_FILENAME = 'ACS_DVila_Backup_Auto.json';
+
+app.get('/api/drive/backup', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ success: false, authenticated: false, error: 'Usuário não autenticado no Google.' });
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: authClient });
+    
+    const searchRes = await drive.files.list({
+      q: `name = '${DRIVE_BACKUP_FILENAME}' and trashed = false`,
+      fields: 'files(id, name, modifiedTime, size)',
+      pageSize: 1
+    });
+
+    const files = searchRes.data.files;
+    if (!files || files.length === 0) {
+      return res.json({ success: false, authenticated: true, message: 'Nenhum backup encontrado no Google Drive.' });
+    }
+
+    const file = files[0];
+    const fileContentRes = await drive.files.get(
+      { fileId: file.id!, alt: 'media' },
+      { responseType: 'text' }
+    );
+
+    let parsedData = null;
+    try {
+      parsedData = typeof fileContentRes.data === 'string' ? JSON.parse(fileContentRes.data) : fileContentRes.data;
+    } catch (e) {}
+
+    return res.json({
+      success: true,
+      authenticated: true,
+      fileId: file.id,
+      modifiedTime: file.modifiedTime,
+      data: parsedData
+    });
+  } catch (err: any) {
+    console.error('Erro ao buscar backup no Google Drive:', err);
+    return res.status(500).json({ success: false, authenticated: true, error: err.message || 'Erro de conexão com o Google Drive' });
+  }
+});
+
+app.post('/api/drive/backup', async (req, res) => {
+  const authClient = getAuthenticatedClient(req);
+  if (!authClient) {
+    return res.status(401).json({ success: false, authenticated: false, error: 'Usuário não autenticado no Google.' });
+  }
+
+  try {
+    const drive = google.drive({ version: 'v3', auth: authClient });
+    const backupContent = JSON.stringify(req.body, null, 2);
+
+    const searchRes = await drive.files.list({
+      q: `name = '${DRIVE_BACKUP_FILENAME}' and trashed = false`,
+      fields: 'files(id, name)',
+      pageSize: 1
+    });
+
+    const files = searchRes.data.files;
+    let fileId = '';
+
+    if (files && files.length > 0) {
+      fileId = files[0].id!;
+      await drive.files.update({
+        fileId,
+        media: {
+          mimeType: 'application/json',
+          body: backupContent
+        }
+      });
+    } else {
+      const createRes = await drive.files.create({
+        requestBody: {
+          name: DRIVE_BACKUP_FILENAME,
+          mimeType: 'application/json',
+          description: "Backup automático do aplicativo ACS D'Vila (Pacientes, Domicílios e Visitas)"
+        },
+        media: {
+          mimeType: 'application/json',
+          body: backupContent
+        },
+        fields: 'id'
+      });
+      fileId = createRes.data.id!;
+    }
+
+    return res.json({
+      success: true,
+      fileId,
+      updatedAt: new Date().toISOString(),
+      message: 'Backup atualizado no Google Drive com sucesso.'
+    });
+  } catch (err: any) {
+    console.error('Erro ao salvar backup no Google Drive:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Erro ao sincronizar com Google Drive' });
+  }
+});
+
 app.post('/api/address/standardize', async (req, res) => {
   const { address, cep: userCep } = req.body;
 
@@ -1216,6 +1384,193 @@ app.post('/api/address/standardize', async (req, res) => {
     hasCep: false,
     message: 'Endereço mantido do cadastro original (Sem CEP / ViaCEP indisponível)'
   });
+});
+
+// GEMINI AI ENDPOINTS (Agente Aguiar Assistente Virtual do ACS)
+function getGeminiAI() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Chave de API do Gemini (GEMINI_API_KEY) não encontrada no servidor.');
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build'
+      }
+    }
+  });
+}
+
+// 1. Assistente Geral do ACS (Dúvidas e-SUS, VD, Fichas, Grupos Prioritários)
+app.post('/api/gemini/assistant', async (req, res) => {
+  try {
+    const { message, history = [], contextData } = req.body;
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ success: false, error: 'Mensagem inválida ou ausente.' });
+    }
+
+    const ai = getGeminiAI();
+
+    let contextSnippet = '';
+    if (contextData) {
+      contextSnippet = `\n[SITUAÇÃO ATUAL DO TERRITÓRIO ACS]:
+- Domicílios cadastrados: ${contextData.domicilesCount || 0}
+- Munícipes/Pacientes: ${contextData.patientsCount || 0}
+- Visitas agendadas hoje: ${contextData.todayVisitsCount || 0}
+- Microárea padrão: ${contextData.microarea || 'Geral'}\n`;
+    }
+
+    const systemInstruction = `Você é o "Agente Aguiar IA", o Assistente Virtual Oficial do Agente Comunitário de Saúde (ACS) no projeto ACS D'Vila (Atenção Primária à Saúde / e-SUS AB).
+Sua missão é dar suporte imediato, prático e fundamentado ao ACS nas suas atividades de rotina no território.
+
+DIRETRIZES FUNDAMENTAIS:
+1. Responda em Português do Brasil com tom profissional, empático, claro e direto ao ponto.
+2. Esclareça dúvidas sobre fichas do e-SUS (Cadastro Individual, Cadastro Domiciliar, Visita Domiciliar - VD).
+3. Oriente sobre acompanhamento de grupos prioritários: Gestantes (sinais de alerta, consultas de pré-natal), Hipertensos/Diabéticos (aferição, hábitos, medicação), Idosos (risco de queda, acamados), Puerpério/Lactantes, Crianças/Vacinação, Arboviroses/Dengue, Escorpiões e Saúde Mental.
+4. NUNCA solicite dados pessoais sensíveis ou identificáveis que violem a LGPD (como CPF, RG ou nome completo dos munícipes).
+5. Forneça respostas organizadas em marcadores/tópicos simples quando couber, facilitando a leitura rápida no celular do ACS durante a rua.
+6. Se a pergunta for fora do contexto de ACS ou saúde pública, responda educadamente redirecionando para a prática de saúde territorial.`;
+
+    const formattedContents = [];
+    if (Array.isArray(history) && history.length > 0) {
+      for (const h of history.slice(-6)) {
+        if (h.role === 'user' || h.role === 'model') {
+          formattedContents.push({
+            role: h.role,
+            parts: [{ text: h.content || h.text || '' }]
+          });
+        }
+      }
+    }
+
+    formattedContents.push({
+      role: 'user',
+      parts: [{ text: contextSnippet + message }]
+    });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: formattedContents,
+      config: {
+        systemInstruction,
+        temperature: 0.7
+      }
+    });
+
+    return res.json({
+      success: true,
+      reply: response.text || 'Não foi possível gerar uma resposta no momento.'
+    });
+  } catch (error: any) {
+    console.error('Erro no endpoint /api/gemini/assistant:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao comunicar com a inteligência artificial Gemini.'
+    });
+  }
+});
+
+// 2. Gerador de Orientações de Visita Domiciliar por Paciente (Anonimizado)
+app.post('/api/gemini/patient-advice', async (req, res) => {
+  try {
+    const { priorityTags = [], ageCategory = '', conditionNotes = '', visitReason = '' } = req.body;
+
+    const ai = getGeminiAI();
+
+    const systemInstruction = `Você é um Consultor Técnico de Saúde da Família e Atenção Básica para ACS.
+Sua tarefa é gerar de 3 a 5 recomendações práticas, humanizadas e cirúrgicas para o ACS realizar durante a Visita Domiciliar (VD) a um munícipe.
+
+REGRAS:
+- Não use nomes próprios ou dados de identificação pessoal.
+- Foque no que o ACS deve OBSERVAR, PERGUNTAR e ORIENTAR.
+- Se houver sinais de alerta vermelho (ex: PA descompensada, sangramento em gestante, vacina atrasada, febre alta em bebê), destaque com "🚨 ATENÇÃO:".
+- Retorne em formato JSON contendo "adviceList" (array de strings) e "summary" (uma frase síntese).`;
+
+    const prompt = `Munícipe com o seguinte perfil no território:
+- Marcadores de Prioridade: ${priorityTags.join(', ') || 'Nenhum específico'}
+- Faixa Etária/Perfil: ${ageCategory || 'Adulto'}
+- Motivo da Visita / Acompanhamento: ${visitReason || 'Acompanhamento de Rotina'}
+- Observações prévias: ${conditionNotes || 'Sem observações'}
+
+Gere o plano de abordagem da visita.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: prompt,
+      config: {
+        systemInstruction,
+        responseMimeType: 'application/json',
+        temperature: 0.5
+      }
+    });
+
+    let resultJson = { adviceList: [], summary: '' };
+    try {
+      if (response.text) {
+        resultJson = JSON.parse(response.text.trim());
+      }
+    } catch (e) {
+      resultJson = {
+        adviceList: [response.text || 'Verificar condições de saúde e atualizar ficha do e-SUS.'],
+        summary: 'Acompanhamento de rotina de saúde territorial.'
+      };
+    }
+
+    return res.json({
+      success: true,
+      data: resultJson
+    });
+  } catch (error: any) {
+    console.error('Erro no endpoint /api/gemini/patient-advice:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao gerar orientações de visita com Gemini.'
+    });
+  }
+});
+
+// 3. Gerador do Roteiro e Resumo Operacional do Dia do ACS
+app.post('/api/gemini/daily-summary', async (req, res) => {
+  try {
+    const { domicilesCount = 0, patientsCount = 0, scheduledVisitsCount = 0, prioritiesSummary = {}, dateStr = '' } = req.body;
+
+    const ai = getGeminiAI();
+
+    const systemInstruction = `Você é um Tutor do e-SUS e Coordenador Virtual de Saúde Comunitária.
+Gere uma mensagem motivadora, organizada e prática para o Agente Comunitário de Saúde iniciar ou planejar o seu dia de trabalho no território.
+
+Aponte prioridades epidemiológicas, incentivo para o alcance das metas do e-SUS e dicas de segurança para a rua.`;
+
+    const prompt = `Data: ${dateStr || 'Hoje'}
+Dados da Microárea do ACS:
+- Total de Residências/Domicílios: ${domicilesCount}
+- Total de Munícipes Cadastrados: ${patientsCount}
+- Visitas Domiciliares Agendadas: ${scheduledVisitsCount}
+- Distribuição de Grupos Prioritários: ${JSON.stringify(prioritiesSummary)}
+
+Elabore um resumo estratégico curto para o dia (3 parágrafos ou seções curtas).`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.6-flash',
+      contents: prompt,
+      config: {
+        systemInstruction,
+        temperature: 0.7
+      }
+    });
+
+    return res.json({
+      success: true,
+      summary: response.text || 'Tenha um excelente dia de trabalho no território!'
+    });
+  } catch (error: any) {
+    console.error('Erro no endpoint /api/gemini/daily-summary:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao gerar resumo diário com Gemini.'
+    });
+  }
 });
 
 // START EXPRESS & VITE MIDDLEWARE
