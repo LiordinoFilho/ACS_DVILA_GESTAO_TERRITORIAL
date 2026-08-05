@@ -66,7 +66,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     return { user: result.user, accessToken: accessToken || '' };
   } catch (error: any) {
-    console.error('Erro na autenticação do Google via Firebase:', error);
+    console.error('Firebase login error:', error?.message || error);
     throw error;
   } finally {
     isSigningIn = false;
