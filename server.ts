@@ -8,7 +8,8 @@ import { createServer as createViteServer } from 'vite';
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
 
 let firebaseConfig: any = {};
@@ -130,9 +131,8 @@ function getAuthenticatedClient(req: express.Request) {
 // AUTH ENDPOINTS
 app.get('/api/auth/google', (req, res) => {
   const clientId = getClientId();
-  const clientSecret = getClientSecret();
 
-  if (!clientId || !clientSecret) {
+  if (!clientId) {
     return res.status(200).send(`
       <!DOCTYPE html>
       <html>
@@ -142,7 +142,7 @@ app.get('/api/auth/google', (req, res) => {
           <style>
             body { font-family: system-ui, -apple-system, sans-serif; padding: 2rem; text-align: center; background: #0f172a; color: #f8fafc; }
             .card { background: #1e293b; max-width: 420px; margin: 40px auto; padding: 2rem; border-radius: 1rem; border: 1px solid #334155; shadow: 0 10px 25px rgba(0,0,0,0.5); }
-            h2 { color: #34d399; margin-top: 0; font-size: 1.25rem; }
+            h2 { color: #f59e0b; margin-top: 0; font-size: 1.25rem; }
             p { font-size: 0.9rem; color: #94a3b8; line-height: 1.5; }
             button { background: #059669; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 0.5rem; font-weight: bold; cursor: pointer; font-size: 0.95rem; margin-top: 1rem; width: 100%; transition: background 0.2s; }
             button:hover { background: #10b981; }
@@ -151,8 +151,7 @@ app.get('/api/auth/google', (req, res) => {
         <body>
           <div class="card">
             <h2>Configuração Google Workspace</h2>
-            <p>O aplicativo está pronto para autenticação. Clique no botão abaixo para tentar conectar com sua Conta Google.</p>
-            <button onclick="window.location.href='/api/auth/google'">Acessar Conta Google</button>
+            <p>O Client ID do Google não foi detectado no ambiente.</p>
           </div>
         </body>
       </html>
@@ -172,12 +171,11 @@ app.get('/api/auth/google', (req, res) => {
 
 app.get('/api/auth/url', (req, res) => {
   const clientId = getClientId();
-  const clientSecret = getClientSecret();
 
-  if (!clientId || !clientSecret) {
+  if (!clientId) {
     return res.json({
       configured: false,
-      message: 'Credenciais OAuth do Google não encontradas no ambiente.'
+      message: 'Client ID do Google não encontrado no ambiente.'
     });
   }
 
@@ -266,7 +264,7 @@ app.get('/api/debug/auth', async (req, res) => {
 
   logs.push(`[1] Verificação de Credenciais do Servidor`);
   logs.push(`- Client ID Configurado: ${clientId ? 'SIM (' + clientId.substring(0, 15) + '...)' : 'NÃO (Falta OAUTH_CLIENT_ID)'}`);
-  logs.push(`- Client Secret Configurado: ${clientSecret ? 'SIM (' + clientSecret.substring(0, 5) + '***)' : 'NÃO (Falta OAUTH_CLIENT_SECRET)'}`);
+  logs.push(`- Client Secret Configurado: ${clientSecret ? 'SIM (' + clientSecret.substring(0, 5) + '***)' : 'Isento / Opcional (Cliente Web/Navegador)'}`);
   logs.push(`- APP_URL Calculada: ${appUrl}`);
   logs.push(`- Redirect URI OAuth: ${redirectUri}`);
 
@@ -368,7 +366,14 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 // HELPER FUNCTIONS FOR GOOGLE CONTACTS PARSING & SYNCING
+let cachedContactGroupsMap: { data: Record<string, string>; timestamp: number } | null = null;
+let cachedGoogleContacts: { data: any[]; timestamp: number } | null = null;
+
 async function getGoogleContactGroupsMap(people: any) {
+  if (cachedContactGroupsMap && (Date.now() - cachedContactGroupsMap.timestamp < 5 * 60 * 1000)) {
+    return cachedContactGroupsMap.data;
+  }
+
   const groupMap: Record<string, string> = {};
   try {
     const groupsRes = await people.contactGroups.list({
@@ -381,8 +386,10 @@ async function getGoogleContactGroupsMap(people: any) {
         }
       });
     }
+    cachedContactGroupsMap = { data: groupMap, timestamp: Date.now() };
   } catch (e: any) {
     console.warn('Aviso: Não foi possível listar marcadores do Google Contatos:', e?.message || e);
+    if (cachedContactGroupsMap) return cachedContactGroupsMap.data;
   }
   return groupMap;
 }
@@ -587,6 +594,12 @@ app.get('/api/contacts', async (req, res) => {
     return res.json({ authenticated: false, contacts: [] });
   }
 
+  // Check 60s memory cache first to protect Google People API quota
+  const now = Date.now();
+  if (cachedGoogleContacts && (now - cachedGoogleContacts.timestamp < 60 * 1000)) {
+    return res.json({ authenticated: true, contacts: cachedGoogleContacts.data, cached: true });
+  }
+
   try {
     const people = google.people({ version: 'v1', auth: authClient });
 
@@ -610,6 +623,7 @@ app.get('/api/contacts', async (req, res) => {
       }
       pageToken = response.data?.nextPageToken;
     } while (pageToken);
+
     const formattedContacts = connections.map((person, idx) => {
       const name = person.names?.[0]?.displayName || 'Contato Sem Nome';
       const email = person.emailAddresses?.[0]?.value || '';
@@ -696,14 +710,31 @@ app.get('/api/contacts', async (req, res) => {
       };
     });
 
+    cachedGoogleContacts = { data: formattedContacts, timestamp: Date.now() };
+
     res.json({ authenticated: true, contacts: formattedContacts });
   } catch (error: any) {
+    const isQuotaError = error?.code === 429 || error?.status === 429 ||
+      /quota|limit|exceeded|resource_exhausted/i.test(error?.message || '');
+
+    if (isQuotaError) {
+      console.warn('[Google Contatos API] Cota temporariamente excedida por minuto. Servindo dados do cache/memória.');
+      return res.json({
+        authenticated: true,
+        contacts: cachedGoogleContacts ? cachedGoogleContacts.data : [],
+        quotaExceeded: true,
+        warning: 'Cota do Google Contatos excedida temporariamente por minuto. Dados preservados na memória local.'
+      });
+    }
+
     const isAuthError = error?.code === 401 || error?.code === 403 || 
       /credential|unauthorized|auth|invalid|expired/i.test(error?.message || '');
+
     if (isAuthError) {
       console.warn('Aviso de autenticação Google Contatos:', error.message || error);
       return res.json({ authenticated: false, contacts: [], error: 'Sessão do Google expirada ou inválida.' });
     }
+
     console.error('Erro ao buscar Google Contatos:', error);
     res.status(500).json({ error: error.message || 'Erro ao carregar contatos' });
   }
@@ -745,6 +776,7 @@ app.post('/api/contacts', async (req, res) => {
       }
     });
 
+    cachedGoogleContacts = null;
     res.json({
       success: true,
       contact: {
@@ -823,6 +855,7 @@ app.put('/api/contacts', async (req, res) => {
       }
     });
 
+    cachedGoogleContacts = null;
     res.json({ success: true, contact: updated.data });
   } catch (error: any) {
     console.error('Erro ao atualizar contato no Google:', error);
@@ -846,6 +879,7 @@ app.delete('/api/contacts', async (req, res) => {
   try {
     const people = google.people({ version: 'v1', auth: authClient });
     await people.people.deleteContact({ resourceName });
+    cachedGoogleContacts = null;
     res.json({ success: true });
   } catch (error: any) {
     console.error('Erro ao excluir contato no Google:', error);
@@ -854,20 +888,65 @@ app.delete('/api/contacts', async (req, res) => {
 });
 
 // GOOGLE CALENDAR ENDPOINTS
+let cachedGoogleEvents: { [dateKey: string]: { data: any[]; timestamp: number } } = {};
+
+function getBrasiliaDateStrServer(): string {
+  try {
+    const parts = new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date());
+
+    const year = parts.find((p) => p.type === 'year')?.value;
+    const month = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+
+    if (year && month && day) {
+      return `${year}-${month}-${day}`;
+    }
+  } catch (e) {}
+  return new Date().toISOString().split('T')[0];
+}
+
+function formatTimeToBrasiliaHHMM(dateTimeStr?: string, defaultVal = '08:00'): string {
+  if (!dateTimeStr) return defaultVal;
+  if (!dateTimeStr.includes('T')) return defaultVal;
+  try {
+    const d = new Date(dateTimeStr);
+    if (isNaN(d.getTime())) return defaultVal;
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(d);
+  } catch (e) {
+    return dateTimeStr.split('T')[1]?.substring(0, 5) || defaultVal;
+  }
+}
+
 app.get('/api/calendar/events', async (req, res) => {
   const authClient = getAuthenticatedClient(req);
-  const dateParam = (req.query.date as string) || new Date().toISOString().split('T')[0];
+  const dateParam = (req.query.date as string) || getBrasiliaDateStrServer();
 
   if (!authClient) {
     return res.json({ authenticated: false, events: [] });
   }
 
+  // Check 60s memory cache first for calendar events
+  const now = Date.now();
+  if (cachedGoogleEvents[dateParam] && (now - cachedGoogleEvents[dateParam].timestamp < 60 * 1000)) {
+    return res.json({ authenticated: true, events: cachedGoogleEvents[dateParam].data, cached: true });
+  }
+
   try {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    // Range for selected date
-    const timeMin = new Date(`${dateParam}T00:00:00Z`).toISOString();
-    const timeMax = new Date(`${dateParam}T23:59:59Z`).toISOString();
+    // Exact 24-hour range for selected date in Brasília Time (America/Sao_Paulo / UTC-3)
+    const timeMin = new Date(`${dateParam}T00:00:00-03:00`).toISOString();
+    const timeMax = new Date(`${dateParam}T23:59:59-03:00`).toISOString();
 
     const response = await calendar.events.list({
       calendarId: 'primary',
@@ -882,8 +961,8 @@ app.get('/api/calendar/events', async (req, res) => {
       const start = ev.start?.dateTime || ev.start?.date || '';
       const end = ev.end?.dateTime || ev.end?.date || '';
 
-      const startTimeStr = start.includes('T') ? start.split('T')[1].substring(0, 5) : '08:00';
-      const endTimeStr = end.includes('T') ? end.split('T')[1].substring(0, 5) : '09:00';
+      const startTimeStr = formatTimeToBrasiliaHHMM(start, '08:00');
+      const endTimeStr = formatTimeToBrasiliaHHMM(end, '09:00');
 
       const localStatus = visitStore[ev.id || '']?.status || 'pendente';
       const localObs = visitStore[ev.id || '']?.observation || '';
@@ -904,14 +983,31 @@ app.get('/api/calendar/events', async (req, res) => {
       };
     });
 
+    cachedGoogleEvents[dateParam] = { data: formattedEvents, timestamp: Date.now() };
+
     res.json({ authenticated: true, events: formattedEvents });
   } catch (error: any) {
+    const isQuotaError = error?.code === 429 || error?.status === 429 ||
+      /quota|limit|exceeded|resource_exhausted/i.test(error?.message || '');
+
+    if (isQuotaError) {
+      console.warn('[Google Agenda API] Cota excedida por minuto. Servindo agenda em cache.');
+      return res.json({
+        authenticated: true,
+        events: cachedGoogleEvents[dateParam] ? cachedGoogleEvents[dateParam].data : [],
+        quotaExceeded: true,
+        warning: 'Cota de requisições do Google Agenda atingida temporariamente.'
+      });
+    }
+
     const isAuthError = error?.code === 401 || error?.code === 403 || 
       /credential|unauthorized|auth|invalid|expired/i.test(error?.message || '');
+
     if (isAuthError) {
       console.warn('Aviso de autenticação Google Agenda:', error.message || error);
       return res.json({ authenticated: false, events: [], error: 'Sessão do Google expirada ou inválida.' });
     }
+
     console.error('Erro ao buscar eventos do Google Agenda:', error);
     res.status(500).json({ error: error.message || 'Erro ao carregar agenda' });
   }
@@ -928,8 +1024,8 @@ app.post('/api/calendar/events', async (req, res) => {
   try {
     const calendar = google.calendar({ version: 'v3', auth: authClient });
 
-    const startDateTime = `${date}T${startTime}:00`;
-    const endDateTime = `${date}T${endTime}:00`;
+    const startISO = new Date(`${date}T${startTime}:00-03:00`).toISOString();
+    const endISO = new Date(`${date}T${endTime}:00-03:00`).toISOString();
 
     const event = await calendar.events.insert({
       calendarId: 'primary',
@@ -937,11 +1033,12 @@ app.post('/api/calendar/events', async (req, res) => {
         summary: title,
         location: address,
         description: `${description || ''}\nContato: ${contactName || ''}\nAgendado via Minha Programação de Trabalho`,
-        start: { dateTime: new Date(startDateTime).toISOString() },
-        end: { dateTime: new Date(endDateTime).toISOString() }
+        start: { dateTime: startISO, timeZone: 'America/Sao_Paulo' },
+        end: { dateTime: endISO, timeZone: 'America/Sao_Paulo' }
       }
     });
 
+    cachedGoogleEvents = {};
     res.json({ success: true, event: event.data });
   } catch (error: any) {
     console.error('Erro ao criar evento no Google Agenda:', error);
@@ -964,6 +1061,161 @@ app.put('/api/visits/:eventId', (req, res) => {
   };
 
   res.json({ success: true, visit: visitStore[eventId] });
+});
+
+// VIA CEP SERVER PROXY & BACKEND STANDARDIZATION ENDPOINTS
+async function fetchViaCepServer(rawCep: string) {
+  const digits = rawCep.replace(/\D/g, '');
+  if (!digits) return null;
+  const cleanCep = digits.length === 7 ? `0${digits}` : digits;
+  if (cleanCep.length !== 8) return null;
+
+  // 1. Primary: ViaCEP
+  try {
+    const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`, {
+      headers: { 'User-Agent': 'ACS-DVila-App/1.0' }
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && !data.erro && (data.cep || data.logradouro || data.localidade)) {
+        return {
+          cep: data.cep || cleanCep,
+          logradouro: data.logradouro || '',
+          complemento: data.complemento || '',
+          bairro: data.bairro || '',
+          localidade: data.localidade || '',
+          uf: data.uf || '',
+          ibge: data.ibge || ''
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Backend ViaCEP] Primary failed, trying BrasilAPI...', err);
+  }
+
+  // 2. Secondary: BrasilAPI
+  try {
+    const res = await fetch(`https://brasilapi.com.br/api/cep/v1/${cleanCep}`);
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && (data.cep || data.street || data.city)) {
+        return {
+          cep: data.cep || cleanCep,
+          logradouro: data.street || '',
+          complemento: '',
+          bairro: data.neighborhood || '',
+          localidade: data.city || '',
+          uf: data.state || '',
+          ibge: ''
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Backend ViaCEP] Secondary failed, trying AwesomeAPI...', err);
+  }
+
+  // 3. Tertiary: AwesomeAPI
+  try {
+    const res = await fetch(`https://cep.awesomeapi.com.br/json/${cleanCep}`);
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && (data.cep || data.address || data.city)) {
+        return {
+          cep: data.cep || cleanCep,
+          logradouro: data.address || '',
+          complemento: '',
+          bairro: data.district || '',
+          localidade: data.city || '',
+          uf: data.state || '',
+          ibge: ''
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[Backend ViaCEP] All CEP providers failed.', err);
+  }
+
+  return null;
+}
+
+app.get('/api/viacep/:cep', async (req, res) => {
+  const result = await fetchViaCepServer(req.params.cep);
+  if (result) {
+    return res.json({ success: true, data: result });
+  }
+  return res.status(404).json({ success: false, error: 'CEP não encontrado ou indisponível' });
+});
+
+// SERVER CACHE BACKUP ENDPOINTS (Triple-layer storage resilience)
+const CACHE_FILE_PATH = path.join(process.cwd(), 'data-cache.json');
+
+app.get('/api/cache/backup', (req, res) => {
+  try {
+    if (fs.existsSync(CACHE_FILE_PATH)) {
+      const raw = fs.readFileSync(CACHE_FILE_PATH, 'utf-8');
+      const data = JSON.parse(raw);
+      return res.json({ success: true, data });
+    }
+  } catch (e) {
+    console.error('Erro ao ler cache do servidor:', e);
+  }
+  return res.json({ success: false, data: null });
+});
+
+app.post('/api/cache/backup', (req, res) => {
+  try {
+    const body = req.body;
+    fs.writeFileSync(
+      CACHE_FILE_PATH,
+      JSON.stringify(
+        {
+          ...body,
+          updatedAt: new Date().toISOString()
+        },
+        null,
+        2
+      )
+    );
+    return res.json({ success: true, message: 'Memória cache salva no servidor com sucesso.' });
+  } catch (e: any) {
+    console.error('Erro ao salvar cache no servidor:', e);
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.post('/api/address/standardize', async (req, res) => {
+  const { address, cep: userCep } = req.body;
+
+  let cepDigits = '';
+  if (userCep) {
+    cepDigits = userCep.replace(/\D/g, '');
+  } else if (address) {
+    const match = address.match(/\b(\d{7,8})\b/) || address.match(/\(\s*(\d{7,8})\s*\)/);
+    if (match) cepDigits = match[1];
+  }
+
+  if (cepDigits) {
+    const viaCepData = await fetchViaCepServer(cepDigits);
+    if (viaCepData && viaCepData.logradouro) {
+      return res.json({
+        success: true,
+        standardizedLogradouro: viaCepData.logradouro,
+        bairro: viaCepData.bairro,
+        city: viaCepData.localidade,
+        state: viaCepData.uf,
+        cep: viaCepData.cep,
+        hasCep: true
+      });
+    }
+  }
+
+  // Se algum endereço não conter o CEP, deixar o endereço do cadastro
+  return res.json({
+    success: true,
+    standardizedLogradouro: address || '',
+    hasCep: false,
+    message: 'Endereço mantido do cadastro original (Sem CEP / ViaCEP indisponível)'
+  });
 });
 
 // START EXPRESS & VITE MIDDLEWARE
