@@ -1,4 +1,5 @@
 import { GoogleContact, Domicile } from '../types';
+import { getBrasiliaDateStr } from './dateUtils';
 import { downloadCSV } from './csvParser';
 
 /**
@@ -19,7 +20,7 @@ export function calculateAge(dateStr?: string): number | null {
 
 /**
  * Cleans street text by removing house numbers, complements, CEPs in parentheses, etc.
- * Example: "Rua. Moacir Sales Davila, 385, Casa 2 ( 6288010 )" -> "Rua. Moacir Sales Davila"
+ * Example: "Rua. Moacir Sales Davila, 385, Casa 2 ( 6288010 )" -> "Rua Moacir Sales Davila"
  */
 export function extractCleanStreetName(raw: string): string {
   if (!raw) return 'Outro / Sem Rua Cadastrada';
@@ -44,6 +45,12 @@ export function extractCleanStreetName(raw: string): string {
   // Remove trailing numbers, "Nº 123", "n° 123", "#123", "S/N"
   firstPart = firstPart.replace(/(?:\b(?:nº|n°|n|num|número|#|s\/n|sn)\s*)?\d+[a-zA-Z]?.*$/i, '').trim();
 
+  // Clean common abbreviation dots e.g. "Rua. " -> "Rua "
+  firstPart = firstPart.replace(/^Rua\.\s*/i, 'Rua ');
+  firstPart = firstPart.replace(/^Av\.\s*/i, 'Avenida ');
+  firstPart = firstPart.replace(/^Tv\.\s*/i, 'Travessa ');
+  firstPart = firstPart.replace(/^R\.\s*/i, 'Rua ');
+
   // Remove trailing punctuation
   firstPart = firstPart.replace(/[-_.,;\s]+$/, '').trim();
 
@@ -55,25 +62,54 @@ export function extractCleanStreetName(raw: string): string {
 }
 
 /**
+ * Standardizes street name formatting (e.g. Rua. -> Rua)
+ */
+export function canonicalizeStreetName(raw: string): string {
+  const clean = extractCleanStreetName(raw);
+  if (!clean || clean === 'Outro / Sem Rua Cadastrada') return clean;
+
+  return clean
+    .replace(/^Rua\.\s*/i, 'Rua ')
+    .replace(/^Av\.\s*/i, 'Avenida ')
+    .replace(/^Tv\.\s*/i, 'Travessa ')
+    .replace(/^Al\.\s*/i, 'Alameda ')
+    .replace(/^R\.\s*/i, 'Rua ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Normalizes street key for deduplication comparison (ignores accents, casing, punctuation)
+ */
+export function normalizeStreetKey(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+}
+
+/**
  * Extracts normalized street name for a given contact without house numbers
  */
 export function getContactStreet(contact: GoogleContact, domiciles: Domicile[]): string {
   if (contact.domicileId) {
     const dom = domiciles.find((d) => d.id === contact.domicileId);
     if (dom && dom.street && dom.street.trim()) {
-      return extractCleanStreetName(dom.street.trim());
+      return canonicalizeStreetName(dom.street.trim());
     }
   }
 
   if (contact.company) {
-    const cleanFromCompany = extractCleanStreetName(contact.company);
+    const cleanFromCompany = canonicalizeStreetName(contact.company);
     if (cleanFromCompany && cleanFromCompany !== 'Outro / Sem Rua Cadastrada') {
       return cleanFromCompany;
     }
   }
 
   if (contact.address) {
-    const cleanFromAddr = extractCleanStreetName(contact.address);
+    const cleanFromAddr = canonicalizeStreetName(contact.address);
     if (cleanFromAddr && cleanFromAddr !== 'Outro / Sem Rua Cadastrada') {
       return cleanFromAddr;
     }
@@ -83,28 +119,39 @@ export function getContactStreet(contact: GoogleContact, domiciles: Domicile[]):
 }
 
 /**
- * Returns a sorted list of all unique street names found in domiciles and contact addresses
+ * Returns a sorted, deduplicated list of all unique street names found in domiciles and contact addresses.
+ * Avoids duplicate variations like "Rua Moacir Sales Davila" vs "Rua Moacir Sales Dávila".
  */
 export function getUniqueStreets(contacts: GoogleContact[], domiciles: Domicile[]): string[] {
-  const streetSet = new Set<string>();
+  const canonicalMap = new Map<string, string>();
 
-  domiciles.forEach((d) => {
-    if (d.street && d.street.trim()) {
-      const clean = extractCleanStreetName(d.street.trim());
-      if (clean && clean !== 'Outro / Sem Rua Cadastrada') {
-        streetSet.add(clean);
+  const processStreet = (rawStreet: string) => {
+    if (!rawStreet || !rawStreet.trim()) return;
+    const clean = canonicalizeStreetName(rawStreet);
+    if (!clean || clean === 'Outro / Sem Rua Cadastrada') return;
+
+    const key = normalizeStreetKey(clean);
+    if (!key) return;
+
+    if (!canonicalMap.has(key)) {
+      canonicalMap.set(key, clean);
+    } else {
+      const existing = canonicalMap.get(key)!;
+      const existingHasAccents = /[áéíóúãõâêîôûç]/i.test(existing);
+      const cleanHasAccents = /[áéíóúãõâêîôûç]/i.test(clean);
+      if (!existingHasAccents && cleanHasAccents) {
+        canonicalMap.set(key, clean);
       }
     }
-  });
+  };
 
+  domiciles.forEach((d) => processStreet(d.street));
   contacts.forEach((c) => {
     const st = getContactStreet(c, domiciles);
-    if (st && st !== 'Outro / Sem Rua Cadastrada') {
-      streetSet.add(st);
-    }
+    processStreet(st);
   });
 
-  return Array.from(streetSet).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  return Array.from(canonicalMap.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 }
 
 /**
@@ -175,7 +222,7 @@ export function exportPatientsToExcel(
   const csvContent = [headers.join(';'), ...rows.map((r) => r.join(';'))].join('\n');
   const catSanitized = categoryLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
   const streetSanitized = streetFilterLabel.toLowerCase().replace(/[^a-z0-9]/g, '_');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getBrasiliaDateStr();
   const filename = `relatorio_eSUS_${catSanitized}_${streetSanitized}_${dateStr}.csv`;
 
   downloadCSV(filename, csvContent);

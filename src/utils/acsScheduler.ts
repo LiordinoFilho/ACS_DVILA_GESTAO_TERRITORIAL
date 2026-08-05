@@ -1,31 +1,25 @@
 import { GoogleContact, CalendarEvent } from '../types';
+import { getBrasiliaDateStr, addDaysBrasilia, addMonthsBrasilia } from './dateUtils';
 
 /**
- * Format a Date object to YYYY-MM-DD
+ * Format a Date object or string to YYYY-MM-DD in Brasília Time
  */
-export function formatDateISO(date: Date): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+export function formatDateISO(date: Date | string): string {
+  return getBrasiliaDateStr(date);
 }
 
 /**
- * Add days to a given YYYY-MM-DD date or Date object
+ * Add days to a given YYYY-MM-DD date or Date object in Brasília Time
  */
 export function addDays(baseDate: string | Date, days: number): string {
-  const d = typeof baseDate === 'string' ? new Date(baseDate + 'T00:00:00') : new Date(baseDate);
-  d.setDate(d.getDate() + days);
-  return formatDateISO(d);
+  return addDaysBrasilia(baseDate, days);
 }
 
 /**
- * Add months to a given YYYY-MM-DD date or Date object
+ * Add months to a given YYYY-MM-DD date or Date object in Brasília Time
  */
 export function addMonths(baseDate: string | Date, months: number): string {
-  const d = typeof baseDate === 'string' ? new Date(baseDate + 'T00:00:00') : new Date(baseDate);
-  d.setMonth(d.getMonth() + months);
-  return formatDateISO(d);
+  return addMonthsBrasilia(baseDate, months);
 }
 
 /**
@@ -117,8 +111,8 @@ export function generateAutoVisitsForPatient(
     visitReason: string,
     description: string,
     eventType: 'visita' | 'alerta_consulta' | 'busca_ativa' = 'visita',
-    startTime = '08:30',
-    endTime = '09:30'
+    startTime = '09:00',
+    endTime = '18:00'
   ): CalendarEvent => ({
     id: `auto_${patient.id}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
     title,
@@ -222,8 +216,8 @@ export function generateAutoVisitsForPatient(
             'Alerta de Consulta com Pediatra',
             `Lembrete ACS para agendar consulta de Puericultura com Pediatra para a criança no ${m}º mês de vida.`,
             'alerta_consulta',
-            '08:00',
-            '08:30'
+            '09:00',
+            '18:00'
           )
         );
       }
@@ -341,8 +335,8 @@ export function generateAutoVisitsForPatient(
             'Alerta de Consulta Pré-Natal',
             `Lembrete ACS para agendamento de consulta médica/G.O de Pré-Natal referente ao ${m}º mês do pré-natal.`,
             'alerta_consulta',
-            '08:00',
-            '08:30'
+            '09:00',
+            '18:00'
           )
         );
       }
@@ -447,8 +441,8 @@ export function generateAutoVisitsForPatient(
           'Agendar Consulta - Saúde Mental',
           `Lembrete ACS: Agendar consulta médica / psiquiátrica para acompanhamento e renovação de receita de Saúde Mental. Medicamentos: ${medsText}.${linkText}`,
           'alerta_consulta',
-          '08:00',
-          '08:30'
+          '09:00',
+          '18:00'
         )
       );
     }
@@ -468,8 +462,8 @@ export function generateAutoVisitsForPatient(
             'Agendar Consulta - Saúde Mental',
             description,
             'alerta_consulta',
-            '08:00',
-            '08:30'
+            '09:00',
+            '18:00'
           )
         );
       }
