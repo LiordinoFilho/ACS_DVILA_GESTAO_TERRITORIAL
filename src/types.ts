@@ -264,8 +264,10 @@ export interface GoogleContact {
   lng?: number;
   company?: string;
   domicileId?: string; // Vinculo com Domicilio
+  unlinkedFromDomicile?: boolean; // Flag to prevent auto-recreating deleted domiciles
   familyRelationship?: FamilyRelationship;
   isHeadOfHousehold?: boolean; // Responsável Familiar
+  manuallySetHeadOfHousehold?: boolean; // Define se o responsável foi editado manualmente pelo operador
   healthProfile?: PatientHealthProfile;
 }
 
@@ -274,6 +276,7 @@ export interface DomicileMember {
   patientName: string;
   relationship: FamilyRelationship;
   isHeadOfHousehold: boolean;
+  manuallySetHeadOfHousehold?: boolean; // Define se foi definido manualmente pelo operador
   cns?: string;
   birthDate?: string;
   phone?: string;
@@ -281,6 +284,7 @@ export interface DomicileMember {
 
 export interface Domicile {
   id: string;
+  hasManuallySetHeadOfHousehold?: boolean; // Indica se o responsável familiar do domicílio foi editado manualmente pelo operador
   street: string; // Logradouro / Rua
   number: string;
   complement?: string;
@@ -352,3 +356,16 @@ export interface DailySummary {
   canceladas: number;
   taxaSucesso: number;
 }
+
+export type TrashItemType = 'patient' | 'domicile' | 'event';
+export type TrashRetentionDays = 0 | 7 | 15 | 30 | 60 | 90;
+
+export interface TrashItem {
+  id: string;
+  type: TrashItemType;
+  deletedAt: string;
+  originalData: GoogleContact | Domicile | CalendarEvent;
+  title: string;
+  subtitle?: string;
+}
+

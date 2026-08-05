@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { GoogleContact, CalendarEvent, Domicile, UserProfile, VisitStatus, MICROAREAS, DEFAULT_MICROAREA, setDefaultMicroarea } from './types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { GoogleContact, CalendarEvent, Domicile, DomicileMember, UserProfile, VisitStatus, MICROAREAS, DEFAULT_MICROAREA, setDefaultMicroarea, TrashItem, TrashRetentionDays } from './types';
 import { INITIAL_CONTACTS, INITIAL_DOMICILES, getInitialEvents } from './mockData';
 import { Header } from './components/Header';
 import { DailyAgenda } from './components/DailyAgenda';
@@ -7,17 +7,41 @@ import { DomicileManager } from './components/DomicileManager';
 import { PatientManager } from './components/PatientManager';
 import { RouteMap } from './components/RouteMap';
 import { MetricsOverview } from './components/MetricsOverview';
-import { GoogleAuthDiagnosticModal } from './components/GoogleAuthDiagnosticModal';
 import { LoginScreen } from './components/LoginScreen';
 import { LGPDModal } from './components/LGPDModal';
 import { SecurityAndBackupModal } from './components/SecurityAndBackupModal';
 import { PinLockModal } from './components/PinLockModal';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { TrashModal } from './components/TrashModal';
+import { DuplicateMergerModal } from './components/DuplicateMergerModal';
+import { GeminiAssistantModal } from './components/GeminiAssistantModal';
+import { Bot } from 'lucide-react';
 import { BottomNavDock } from './components/BottomNavDock';
 import { getSavedThemeId, saveThemeId, getThemeById, ThemeId } from './utils/themeUtils';
+import {
+  findDuplicateCandidates,
+  getDismissedDuplicateKeys,
+  dismissDuplicateGroup,
+  mergeContactData,
+  DuplicateCandidateGroup
+} from './utils/duplicateUtils';
+import {
+  getSavedTrashItems,
+  saveTrashItems,
+  getSavedTrashRetentionDays,
+  saveTrashRetentionDays,
+  purgeExpiredTrashItems,
+  createTrashItemFromContact,
+  createTrashItemFromDomicile,
+  createTrashItemFromEvent
+} from './utils/trashUtils';
 import { initAuth, googleSignIn, logoutFirebase, getAccessToken } from './lib/firebaseAuth';
-import { processAndGroupContactsByCEP } from './utils/domicileGroupUtils';
-import { Sparkles, ShieldAlert, LogIn } from 'lucide-react';
+import { processAndGroupContactsByCEP, generateDomicileAddressKey, extractBirthDateFromNotes } from './utils/domicileGroupUtils';
+import { getContactStreet } from './utils/exportUtils';
+import { getBrasiliaDateStr } from './utils/dateUtils';
+import { saveAllAppData, loadAllAppData } from './services/cacheStorageService';
+import { PWAInstallBanner } from './components/PWAInstallBanner';
+import { Sparkles, ShieldAlert, LogIn, CheckCircle2, WifiOff, Wifi } from 'lucide-react';
 
 const getAuthHeaders = (): Record<string, string> => {
   const headers: Record<string, string> = {};
@@ -31,14 +55,24 @@ const getAuthHeaders = (): Record<string, string> => {
 
 export default function App() {
   const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return getBrasiliaDateStr();
   });
 
   const [activeTab, setActiveTab] = useState<'agenda' | 'domiciles' | 'patients' | 'route' | 'metrics'>('agenda');
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState<boolean>(false);
   const [isThemeModalOpen, setIsThemeModalOpen] = useState<boolean>(false);
+  const [syncToast, setSyncToast] = useState<{ show: boolean; message: string; subtext?: string } | null>(null);
+  const [isTrashOpen, setIsTrashOpen] = useState<boolean>(false);
+  const [isDuplicateMergerOpen, setIsDuplicateMergerOpen] = useState<boolean>(false);
+  const [isGeminiModalOpen, setIsGeminiModalOpen] = useState<boolean>(false);
+  const [dismissedDuplicateKeys, setDismissedDuplicateKeys] = useState<string[]>(() => getDismissedDuplicateKeys());
+  const [trashRetentionDays, setTrashRetentionDays] = useState<TrashRetentionDays>(getSavedTrashRetentionDays);
+  const [trashItems, setTrashItems] = useState<TrashItem[]>(() => {
+    const saved = getSavedTrashItems();
+    return purgeExpiredTrashItems(saved, getSavedTrashRetentionDays());
+  });
   const [currentThemeId, setCurrentThemeId] = useState<ThemeId>(getSavedThemeId);
   const [isMobileFrame, setIsMobileFrame] = useState<boolean>(() => {
     const saved = localStorage.getItem('acs_mobile_frame');
@@ -105,18 +139,49 @@ export default function App() {
     return getInitialEvents();
   });
 
-  // Save to LocalStorage whenever ACS states change
+  const candidateDuplicateGroups = React.useMemo(() => {
+    return findDuplicateCandidates(contacts, dismissedDuplicateKeys);
+  }, [contacts, dismissedDuplicateKeys]);
+
+  const isHydratedRef = useRef(false);
+
+  // Startup background hydration check from IndexedDB or Server Backup if needed
   useEffect(() => {
-    localStorage.setItem('acs_domiciles', JSON.stringify(domiciles));
-  }, [domiciles]);
+    loadAllAppData().then(({ domiciles: loadedDom, contacts: loadedCont, events: loadedEv, trashItems: loadedTrash, source }) => {
+      if (source === 'IndexedDB' || source === 'ServerCache') {
+        setDomiciles(loadedDom);
+        setContacts(loadedCont);
+        setEvents(loadedEv);
+        setTrashItems(loadedTrash);
+      }
+      isHydratedRef.current = true;
+    });
+  }, []);
+
+  // Safe unified persistence: Writes across RAM Cache, LocalStorage, IndexedDB and Server Backup File
+  useEffect(() => {
+    if (!isHydratedRef.current) return;
+    saveAllAppData(domiciles, contacts, events, trashItems);
+  }, [domiciles, contacts, events, trashItems]);
+
+  // Network connectivity state listener
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('acs_patients', JSON.stringify(contacts));
-  }, [contacts]);
-
-  useEffect(() => {
-    localStorage.setItem('acs_visits', JSON.stringify(events));
-  }, [events]);
+    const purged = purgeExpiredTrashItems(trashItems, trashRetentionDays);
+    saveTrashItems(purged);
+  }, [trashItems, trashRetentionDays]);
 
   // Migration effect to convert legacy microareas to circle emoji versions
   useEffect(() => {
@@ -166,18 +231,11 @@ export default function App() {
     });
   }, []);
 
-  // Startup auto-grouping effect for contacts & domiciles by CEP and Empresa
-  useEffect(() => {
-    processAndGroupContactsByCEP(contacts, domiciles).then(({ updatedContacts, updatedDomiciles }) => {
-      setContacts(updatedContacts);
-      setDomiciles(updatedDomiciles);
-    });
-  }, []);
-
   // Check auth status on load
   const checkAuth = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me', { headers: getAuthHeaders() });
+      if (!res.ok) return;
       const data = await res.json();
 
       if (data.isAuthenticated) {
@@ -193,25 +251,57 @@ export default function App() {
         setUser((prev) => ({ ...prev, isAuthenticated: false, isDemo: true }));
       }
     } catch (err) {
-      console.error('Erro ao verificar autenticação:', err);
+      console.warn('Aviso: Verificação de autenticação off-line ou indisponível. Mantendo dados salvos localmente.');
     }
   }, []);
 
-  // Fetch Contacts from Google API if connected
+  const domicilesRef = useRef(domiciles);
+  domicilesRef.current = domiciles;
+
+  const trashItemsRef = useRef(trashItems);
+  trashItemsRef.current = trashItems;
+
+  // Fetch Contacts from Google API if connected (Safe Merge with Local Data)
   const fetchContacts = useCallback(async () => {
     try {
       const res = await fetch('/api/contacts', { headers: getAuthHeaders() });
+      if (!res.ok) {
+        console.warn('Aviso ao buscar contatos:', res.statusText || res.status);
+        return;
+      }
       const data = await res.json();
 
       if (data.authenticated) {
         setIsGoogleTokenExpired(false);
-        if (data.contacts && data.contacts.length > 0) {
-          const { updatedContacts, updatedDomiciles } = await processAndGroupContactsByCEP(
-            data.contacts,
-            domiciles
-          );
-          setContacts(updatedContacts);
-          setDomiciles(updatedDomiciles);
+        if (data.contacts && Array.isArray(data.contacts) && data.contacts.length > 0) {
+          setContacts((prevContacts) => {
+            const contactMap = new Map<string, GoogleContact>();
+            // Preserve all existing local contacts
+            prevContacts.forEach((c) => contactMap.set(c.id, c));
+
+            // Merge in remote contacts
+            data.contacts.forEach((remote: GoogleContact) => {
+              const parsedBirthDate = remote.birthDate || extractBirthDateFromNotes(remote.notes);
+              const remoteWithBirthDate = { ...remote, birthDate: parsedBirthDate || remote.birthDate };
+
+              const existing = contactMap.get(remote.id);
+              if (existing) {
+                contactMap.set(remote.id, {
+                  ...existing,
+                  ...remoteWithBirthDate,
+                  birthDate: remoteWithBirthDate.birthDate || existing.birthDate,
+                  microarea: existing.microarea || remote.microarea,
+                  healthProfile: existing.healthProfile || remote.healthProfile,
+                  domicileId: existing.domicileId || remote.domicileId,
+                  unlinkedFromDomicile: existing.unlinkedFromDomicile ?? remote.unlinkedFromDomicile
+                });
+              } else {
+                contactMap.set(remote.id, remoteWithBirthDate);
+              }
+            });
+
+            return Array.from(contactMap.values());
+          });
         }
       } else {
         if (getAccessToken() || localStorage.getItem('google_tokens')) {
@@ -219,21 +309,47 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Erro ao buscar contatos do Google:', err);
+      console.warn('Aviso: Conexão off-line ou servidor indisponível. Mantendo contatos salvos no cache local (RAM/Disco).');
     }
-  }, [domiciles]);
+  }, []);
 
-  // Fetch Events from Google Calendar API
+  // Fetch Events from Google Calendar API (Safe Merge with Local Data)
   const fetchEvents = useCallback(async (dateStr: string) => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/calendar/events?date=${dateStr}`, { headers: getAuthHeaders() });
+      if (!res.ok) {
+        console.warn('Aviso ao buscar agenda:', res.statusText || res.status);
+        return;
+      }
       const data = await res.json();
 
       if (data.authenticated) {
         setIsGoogleTokenExpired(false);
-        if (data.events && data.events.length > 0) {
-          setEvents(data.events);
+        if (data.events && Array.isArray(data.events)) {
+          setEvents((prevEvents) => {
+            const eventMap = new Map<string, CalendarEvent>();
+            // Preserve ALL local events across all dates
+            prevEvents.forEach((e) => eventMap.set(e.id, e));
+
+            // Merge remote events safely
+            data.events.forEach((remoteEv: CalendarEvent) => {
+              const existing = eventMap.get(remoteEv.id);
+              if (existing) {
+                eventMap.set(remoteEv.id, {
+                  ...remoteEv,
+                  // Keep local status and observation if updated locally
+                  status: existing.status !== 'pendente' ? existing.status : remoteEv.status,
+                  observation: existing.observation !== undefined ? existing.observation : remoteEv.observation,
+                  updatedAt: existing.updatedAt || remoteEv.updatedAt
+                });
+              } else {
+                eventMap.set(remoteEv.id, remoteEv);
+              }
+            });
+
+            return Array.from(eventMap.values());
+          });
         }
       } else {
         if (getAccessToken() || localStorage.getItem('google_tokens')) {
@@ -241,7 +357,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Erro ao buscar agenda:', err);
+      console.warn('Aviso: Conexão off-line ou servidor indisponível. Mantendo agenda salva no cache local.');
     } finally {
       setIsLoading(false);
     }
@@ -277,9 +393,48 @@ export default function App() {
   useEffect(() => {
     if (user.isAuthenticated) {
       fetchContacts();
+    }
+  }, [user.isAuthenticated, fetchContacts]);
+
+  useEffect(() => {
+    if (user.isAuthenticated) {
       fetchEvents(selectedDate);
     }
-  }, [selectedDate, user.isAuthenticated, fetchContacts, fetchEvents]);
+  }, [selectedDate, user.isAuthenticated, fetchEvents]);
+
+  // Hash fragment listener for OAuth redirect (Implicit Flow)
+  useEffect(() => {
+    const parseHashToken = async () => {
+      const hash = window.location.hash || window.location.search;
+      if (hash && (hash.includes('access_token=') || hash.includes('token='))) {
+        try {
+          const params = new URLSearchParams(hash.startsWith('#') ? hash.substring(1) : hash);
+          const accessToken = params.get('access_token');
+          if (accessToken) {
+            const tokenData = JSON.stringify({
+              access_token: accessToken,
+              created_at: Date.now()
+            });
+            localStorage.setItem('google_tokens', tokenData);
+            window.history.replaceState(null, '', window.location.pathname);
+
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', tokens: tokenData }, '*');
+              setTimeout(() => window.close(), 500);
+            } else {
+              await checkAuth();
+              await fetchContacts();
+              await fetchEvents(selectedDate);
+            }
+          }
+        } catch (e) {
+          console.error('Erro ao processar token da URL:', e);
+        }
+      }
+    };
+
+    parseHashToken();
+  }, [checkAuth, fetchContacts, fetchEvents, selectedDate]);
 
   // Listen for popup OAuth success
   useEffect(() => {
@@ -298,7 +453,7 @@ export default function App() {
     return () => window.removeEventListener('message', handleMessage);
   }, [checkAuth]);
 
-  // Handle Google Login Flow via Firebase Popup with server url fallback
+  // Handle Google Login Flow via Firebase Auth SDK
   const handleConnectGoogle = async () => {
     setIsLoading(true);
     try {
@@ -312,36 +467,12 @@ export default function App() {
           isDemo: false
         });
         setIsLoginScreenVisible(false);
+        setIsGoogleTokenExpired(false);
         await fetchContacts();
         await fetchEvents(selectedDate);
-        return;
       }
     } catch (err: any) {
-      console.warn('Firebase login error, trying direct OAuth popup:', err);
-      // Fallback to server OAuth popup / url if needed
-      const width = 600;
-      const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-
-      let targetUrl = '/api/auth/google';
-      try {
-        const urlRes = await fetch('/api/auth/url');
-        const data = await urlRes.json();
-        if (data.configured && data.url) {
-          targetUrl = data.url;
-        }
-      } catch (e) {}
-
-      const popup = window.open(
-        targetUrl,
-        'google_oauth_popup',
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,status=yes`
-      );
-
-      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-        window.open(targetUrl, '_blank');
-      }
+      console.warn('Erro na conexão com Google:', err);
     } finally {
       setIsLoading(false);
     }
@@ -365,12 +496,39 @@ export default function App() {
 
   const handleRefresh = async () => {
     setIsLoading(true);
+    // 1. Force immediately saving all local state across RAM, LocalStorage, IndexedDB and Server Backup File
+    await saveAllAppData(domiciles, contacts, events, trashItems, true);
+
     await checkAuth();
     if (user.isAuthenticated) {
       await fetchContacts();
       await fetchEvents(selectedDate);
+      setSyncToast({
+        show: true,
+        message: 'Sincronização com Google concluída!',
+        subtext: `${contacts.length} cadastros e ${events.length} visitas gravados na memória RAM, cache local e backup.`
+      });
+    } else {
+      // Local/Demo Mode: Re-verify links and CEP auto-grouping safely
+      const { updatedContacts, updatedDomiciles } = await processAndGroupContactsByCEP(contacts, domiciles, {
+        autoCreateMissingDomiciles: false,
+        trashItems
+      });
+      setContacts(updatedContacts);
+      setDomiciles(updatedDomiciles);
+      await saveAllAppData(updatedDomiciles, updatedContacts, events, trashItems, true);
+
+      setSyncToast({
+        show: true,
+        message: 'Memória RAM & Cache Local Atualizados!',
+        subtext: 'Suas modificações foram gravadas com sucesso na memória RAM, cache de disco e arquivo de backup.'
+      });
     }
     setIsLoading(false);
+
+    setTimeout(() => {
+      setSyncToast(null);
+    }, 4500);
   };
 
   // --- Domicile Handlers ---
@@ -400,7 +558,37 @@ export default function App() {
   };
 
   const handleDeleteDomicile = (id: string) => {
+    const domToDelete = domiciles.find((d) => d.id === id);
+    let domAddressKey = '';
+    if (domToDelete) {
+      const trashItem = createTrashItemFromDomicile(domToDelete);
+      setTrashItems((prev) => [trashItem, ...prev]);
+      if (domToDelete.street && domToDelete.number) {
+        domAddressKey = generateDomicileAddressKey(domToDelete.street, domToDelete.number, domToDelete.complement);
+      }
+    }
+
+    // Filter out deleted domicile
     setDomiciles((prev) => prev.filter((d) => d.id !== id));
+
+    // Unlink contacts that belonged to this domicile or matching address and flag them so they don't auto-recreate the deleted domicile
+    setContacts((prev) =>
+      prev.map((c) => {
+        const contactStreet = c.street || getContactStreet(c, domiciles);
+        const contactAddrKey =
+          contactStreet && c.addressNumber
+            ? generateDomicileAddressKey(contactStreet, c.addressNumber, c.addressComplement)
+            : '';
+        if (c.domicileId === id || (domAddressKey && contactAddrKey === domAddressKey)) {
+          return {
+            ...c,
+            domicileId: undefined,
+            unlinkedFromDomicile: true
+          };
+        }
+        return c;
+      })
+    );
   };
 
   // --- Patient Handlers ---
@@ -408,7 +596,8 @@ export default function App() {
     // Automatically process CEP, ViaCEP, company field ("Empresa"), and Domicile grouping
     const { updatedContacts, updatedDomiciles } = await processAndGroupContactsByCEP(
       [newContact, ...contacts],
-      domiciles
+      domiciles,
+      { autoCreateMissingDomiciles: false, trashItems }
     );
 
     setContacts(updatedContacts);
@@ -430,7 +619,7 @@ export default function App() {
           );
         }
       } catch (err) {
-        console.error('Erro ao criar contato no Google Contatos:', err);
+        console.warn('Aviso ao criar contato no Google Contatos (salvo localmente no dispositivo):', err);
       }
     }
   };
@@ -439,7 +628,8 @@ export default function App() {
     const list = contacts.map((c) => (c.id === updatedContact.id ? updatedContact : c));
     const { updatedContacts, updatedDomiciles } = await processAndGroupContactsByCEP(
       list,
-      domiciles
+      domiciles,
+      { autoCreateMissingDomiciles: false, trashItems }
     );
 
     setContacts(updatedContacts);
@@ -469,12 +659,18 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.error('Erro ao atualizar contato no Google Contatos:', err);
+        console.warn('Aviso ao atualizar contato no Google Contatos (salvo localmente no dispositivo):', err);
       }
     }
   };
 
   const handleDeleteContact = async (id: string) => {
+    const contactToDelete = contacts.find((c) => c.id === id);
+    if (contactToDelete) {
+      const trashItem = createTrashItemFromContact(contactToDelete);
+      setTrashItems((prev) => [trashItem, ...prev]);
+    }
+
     setContacts((prev) => prev.filter((c) => c.id !== id));
 
     if (user.isAuthenticated && id.startsWith('people/')) {
@@ -483,18 +679,220 @@ export default function App() {
           method: 'DELETE'
         });
       } catch (err) {
-        console.error('Erro ao excluir contato no Google Contatos:', err);
+        console.warn('Aviso ao excluir contato no Google Contatos (removido localmente no dispositivo):', err);
       }
     }
 
-    // Remove from domiciles
+    // Remove from domiciles and reassign head of household if needed
     setDomiciles((prev) =>
-      prev.map((d) => ({
-        ...d,
-        familyMembers: d.familyMembers.filter((m) => m.patientId !== id)
-      }))
+      prev.map((d) => {
+        const remainingMembers = d.familyMembers.filter((m) => m.patientId !== id);
+        if (remainingMembers.length === d.familyMembers.length) return d;
+
+        const removedMemberWasHead = d.familyMembers.some((m) => m.patientId === id && m.isHeadOfHousehold);
+        if (removedMemberWasHead && remainingMembers.length > 0) {
+          remainingMembers[0] = {
+            ...remainingMembers[0],
+            isHeadOfHousehold: true,
+            relationship: 'Responsável Familiar'
+          };
+        }
+
+        return {
+          ...d,
+          familyMembers: remainingMembers
+        };
+      })
     );
   };
+
+  const handleDeleteEvent = (eventId: string) => {
+    const eventToDelete = events.find((e) => e.id === eventId);
+    if (eventToDelete) {
+      const trashItem = createTrashItemFromEvent(eventToDelete);
+      setTrashItems((prev) => [trashItem, ...prev]);
+    }
+    setEvents((prev) => prev.filter((e) => e.id !== eventId));
+  };
+
+  // --- Trash Handlers ---
+  const handleRestoreTrashItem = (item: TrashItem) => {
+    if (item.type === 'patient') {
+      const restored = { ...(item.originalData as GoogleContact), unlinkedFromDomicile: false };
+      setContacts((prev) => (prev.some((c) => c.id === restored.id) ? prev : [restored, ...prev]));
+
+      if (restored.domicileId) {
+        setDomiciles((prev) =>
+          prev.map((d) => {
+            if (d.id === restored.domicileId) {
+              const exists = d.familyMembers.some((m) => m.patientId === restored.id);
+              if (!exists) {
+                const isHead = d.familyMembers.length === 0 || !!restored.isHeadOfHousehold;
+                const newMember: DomicileMember = {
+                  patientId: restored.id,
+                  patientName: restored.name,
+                  relationship: restored.familyRelationship || (isHead ? 'Responsável Familiar' : 'Outro Parente'),
+                  isHeadOfHousehold: isHead,
+                  cns: restored.cns,
+                  birthDate: restored.birthDate,
+                  phone: restored.phone
+                };
+                return { ...d, familyMembers: [...d.familyMembers, newMember] };
+              }
+            }
+            return d;
+          })
+        );
+      }
+    } else if (item.type === 'domicile') {
+      const restoredDom = item.originalData as Domicile;
+      setDomiciles((prev) => (prev.some((d) => d.id === restoredDom.id) ? prev : [restoredDom, ...prev]));
+
+      const memberIds = new Set(restoredDom.familyMembers.map((m) => m.patientId));
+      setContacts((prev) =>
+        prev.map((c) => {
+          if (memberIds.has(c.id)) {
+            const member = restoredDom.familyMembers.find((m) => m.patientId === c.id);
+            return {
+              ...c,
+              domicileId: restoredDom.id,
+              unlinkedFromDomicile: false,
+              familyRelationship: member?.relationship,
+              isHeadOfHousehold: member?.isHeadOfHousehold
+            };
+          }
+          return c;
+        })
+      );
+    } else if (item.type === 'event') {
+      const restored = item.originalData as CalendarEvent;
+      setEvents((prev) => (prev.some((e) => e.id === restored.id) ? prev : [restored, ...prev]));
+    }
+    setTrashItems((prev) => prev.filter((i) => i.id !== item.id));
+  };
+
+  const handleRestoreAllTrashItems = () => {
+    trashItems.forEach((item) => {
+      handleRestoreTrashItem(item);
+    });
+    setTrashItems([]);
+  };
+
+  const handlePermanentlyDeleteTrashItem = (id: string) => {
+    setTrashItems((prev) => prev.filter((i) => i.id !== id));
+  };
+
+  const handleEmptyTrash = () => {
+    setTrashItems([]);
+  };
+
+  const handleChangeRetentionDays = (days: TrashRetentionDays) => {
+    setTrashRetentionDays(days);
+    saveTrashRetentionDays(days);
+    setTrashItems((prev) => purgeExpiredTrashItems(prev, days));
+  };
+
+  const handleConfirmMergeDuplicates = useCallback(
+    (groupsToMerge: { group: DuplicateCandidateGroup; mergedContact: GoogleContact }[]) => {
+      if (groupsToMerge.length === 0) return;
+
+      let updatedContacts = [...contacts];
+      let updatedEvents = [...events];
+      let updatedDomiciles = [...domiciles];
+      let newTrashItems: TrashItem[] = [];
+
+      groupsToMerge.forEach(({ group, mergedContact }) => {
+        const primaryId = group.primaryContact.id;
+        const secondaryIds = group.secondaryContacts.map((s) => s.id);
+        const secondaryIdsSet = new Set(secondaryIds);
+
+        // 1. Replace primary contact with mergedContact, remove secondary contacts
+        updatedContacts = updatedContacts
+          .map((c) => (c.id === primaryId ? mergedContact : c))
+          .filter((c) => !secondaryIdsSet.has(c.id));
+
+        // 2. Move secondary contacts to Trash
+        group.secondaryContacts.forEach((sec) => {
+          const trashItem = createTrashItemFromContact(sec);
+          trashItem.subtitle = `[Unificado em ${mergedContact.name}] ${trashItem.subtitle}`;
+          newTrashItems.push(trashItem);
+        });
+
+        // 3. Re-link Calendar Events
+        updatedEvents = updatedEvents.map((ev) => {
+          if (ev.contactId && secondaryIdsSet.has(ev.contactId)) {
+            return {
+              ...ev,
+              contactId: primaryId,
+              contactName: mergedContact.name,
+              address: ev.address || mergedContact.address || ''
+            };
+          }
+          return ev;
+        });
+
+        // 4. Re-link Domicile Members and deduplicate members
+        updatedDomiciles = updatedDomiciles.map((dom) => {
+          if (!dom.familyMembers || dom.familyMembers.length === 0) return dom;
+
+          let membersChanged = false;
+          const updatedMembers: DomicileMember[] = [];
+          const seenPatientIds = new Set<string>();
+
+          dom.familyMembers.forEach((member) => {
+            let targetId = member.patientId;
+            let targetName = member.patientName;
+
+            if (secondaryIdsSet.has(member.patientId)) {
+              targetId = primaryId;
+              targetName = mergedContact.name;
+              membersChanged = true;
+            }
+
+            if (!seenPatientIds.has(targetId)) {
+              seenPatientIds.add(targetId);
+              updatedMembers.push({
+                ...member,
+                patientId: targetId,
+                patientName: targetName,
+                cns: targetId === primaryId ? mergedContact.cns || member.cns : member.cns,
+                birthDate: targetId === primaryId ? mergedContact.birthDate || member.birthDate : member.birthDate,
+                phone: targetId === primaryId ? mergedContact.phone || member.phone : member.phone
+              });
+            } else {
+              membersChanged = true;
+            }
+          });
+
+          return membersChanged ? { ...dom, familyMembers: updatedMembers } : dom;
+        });
+      });
+
+      setContacts(updatedContacts);
+      setEvents(updatedEvents);
+      setDomiciles(updatedDomiciles);
+
+      const allTrash = [...newTrashItems, ...trashItems];
+      setTrashItems(allTrash);
+
+      // Save to RAM cache, local storage, indexedDB and background backup
+      saveAllAppData(updatedDomiciles, updatedContacts, updatedEvents, allTrash);
+
+      setSyncToast({
+        show: true,
+        message: 'Unificação Concluída com Sucesso! ✨',
+        subtext: `${groupsToMerge.length} ${groupsToMerge.length === 1 ? 'cadastro unificado' : 'cadastros unificados'}. Histórico de visitas e cadastros domiciliares foram reatrelados ao cadastro principal.`
+      });
+
+      setIsDuplicateMergerOpen(false);
+    },
+    [contacts, events, domiciles, trashItems]
+  );
+
+  const handleDismissDuplicateGroup = useCallback((groupKey: string) => {
+    const updatedKeys = dismissDuplicateGroup(groupKey);
+    setDismissedDuplicateKeys(updatedKeys);
+  }, []);
 
   // --- Visit Event Handlers ---
   const handleUpdateEventStatus = async (eventId: string, newStatus: VisitStatus, observation?: string) => {
@@ -530,8 +928,8 @@ export default function App() {
       id: `ev_${Date.now()}`,
       title: newEventData.title || 'Visita Domiciliar ACS',
       address: newEventData.address || '',
-      startTime: newEventData.startTime || '08:30',
-      endTime: newEventData.endTime || '09:30',
+      startTime: newEventData.startTime || '09:00',
+      endTime: newEventData.endTime || '18:00',
       date: selectedDate,
       visitReason: newEventData.visitReason || 'Acompanhamento de Saúde',
       description: newEventData.description || '',
@@ -570,7 +968,8 @@ export default function App() {
 
     const { updatedContacts, updatedDomiciles } = await processAndGroupContactsByCEP(
       combined,
-      domiciles
+      domiciles,
+      { autoCreateMissingDomiciles: true, trashItems }
     );
 
     setContacts(updatedContacts);
@@ -612,7 +1011,7 @@ export default function App() {
       contactName: contact.name,
       phone: contact.phone,
       startTime: '09:00',
-      endTime: '10:00'
+      endTime: '18:00'
     });
     setActiveTab('agenda');
   };
@@ -626,7 +1025,7 @@ export default function App() {
       contactId: head?.patientId,
       contactName: head?.patientName,
       startTime: '09:00',
-      endTime: '10:00'
+      endTime: '18:00'
     });
     setActiveTab('agenda');
   };
@@ -650,9 +1049,7 @@ export default function App() {
     setDomiciles(newDomiciles);
     setContacts(newContacts);
     setEvents(newEvents);
-    localStorage.setItem('acs_domiciles', JSON.stringify(newDomiciles));
-    localStorage.setItem('acs_patients', JSON.stringify(newContacts));
-    localStorage.setItem('acs_visits', JSON.stringify(newEvents));
+    saveAllAppData(newDomiciles, newContacts, newEvents, trashItems, true);
   };
 
   if (isLoginScreenVisible && !user.isAuthenticated) {
@@ -672,13 +1069,7 @@ export default function App() {
         <LoginScreen
           onLoginGoogle={handleConnectGoogle}
           onContinueDemo={() => setIsLoginScreenVisible(false)}
-          onOpenDiagnostic={() => setIsDiagnosticModalOpen(true)}
           isLoading={isLoading}
-        />
-        <GoogleAuthDiagnosticModal
-          isOpen={isDiagnosticModalOpen}
-          onClose={() => setIsDiagnosticModalOpen(false)}
-          onRecheckAuth={checkAuth}
         />
       </>
     );
@@ -687,6 +1078,52 @@ export default function App() {
   const handleApplyGrouping = (updatedContacts: GoogleContact[], updatedDomiciles: Domicile[]) => {
     setContacts(updatedContacts);
     setDomiciles(updatedDomiciles);
+
+    // Synchronize addresses across all scheduled events in state
+    setEvents((prevEvents) =>
+      prevEvents.map((ev) => {
+        let matchingContact = updatedContacts.find((c) => c.id === ev.contactId);
+        if (!matchingContact && ev.contactName) {
+          matchingContact = updatedContacts.find(
+            (c) => c.name.toLowerCase() === ev.contactName?.toLowerCase()
+          );
+        }
+        if (!matchingContact && ev.title) {
+          const titleParts = ev.title.split(/[:\-]/);
+          if (titleParts.length > 1) {
+            const extractedName = titleParts[titleParts.length - 1].trim();
+            if (extractedName.length >= 3) {
+              matchingContact = updatedContacts.find(
+                (c) => c.name.toLowerCase() === extractedName.toLowerCase() ||
+                          c.name.toLowerCase().includes(extractedName.toLowerCase()) ||
+                          extractedName.toLowerCase().includes(c.name.toLowerCase())
+              );
+            }
+          }
+        }
+
+        if (matchingContact) {
+          let newAddr = matchingContact.address;
+          if ((!newAddr || newAddr === 'Sem endereço cadastrado' || newAddr === 'Endereço territorial do paciente') && matchingContact.domicileId) {
+            const d = updatedDomiciles.find((dom) => dom.id === matchingContact?.domicileId);
+            if (d) {
+              const compStr = d.complement ? `, ${d.complement}` : '';
+              newAddr = `${d.street}, ${d.number}${compStr} - ${d.neighborhood}`;
+            }
+          }
+          if (newAddr && newAddr !== 'Sem endereço cadastrado') {
+            return {
+              ...ev,
+              contactId: matchingContact.id,
+              contactName: matchingContact.name,
+              domicileId: matchingContact.domicileId || ev.domicileId,
+              address: newAddr
+            };
+          }
+        }
+        return ev;
+      })
+    );
   };
 
   const currentTheme = getThemeById(currentThemeId);
@@ -724,15 +1161,22 @@ export default function App() {
           </div>
         )}
 
+        {/* PWA Mobile Native App Install Banner */}
+        <PWAInstallBanner />
+
         {/* Header with Navigation & Microarea Metrics */}
         <Header
           user={user}
           selectedDate={selectedDate}
           onDateChange={setSelectedDate}
           onConnectGoogle={handleConnectGoogle}
-          onOpenDiagnostic={() => setIsDiagnosticModalOpen(true)}
           onOpenSecurityAndBackup={() => setIsSecurityModalOpen(true)}
           onOpenThemeSelector={() => setIsThemeModalOpen(true)}
+          onOpenDuplicateMerger={() => setIsDuplicateMergerOpen(true)}
+          onOpenGeminiAssistant={() => setIsGeminiModalOpen(true)}
+          duplicateCount={candidateDuplicateGroups.length}
+          onOpenTrash={() => setIsTrashOpen(true)}
+          trashCount={trashItems.length}
           onLogout={handleLogout}
           onRefresh={handleRefresh}
           isLoading={isLoading}
@@ -744,6 +1188,34 @@ export default function App() {
 
         {/* Main Content Area */}
         <main className={`flex-1 ${isMobileFrame ? 'px-3.5 py-4 pb-28' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-28'}`}>
+          {/* Offline Mode Banner */}
+          {!isOnline && (
+            <div className="mb-5 bg-amber-500/10 border border-amber-500/30 rounded-2xl p-4 flex items-center gap-3 text-amber-900 dark:text-amber-200 animate-fadeIn transition-all shadow-sm">
+              <div className="p-2 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-xl shrink-0">
+                <WifiOff className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-amber-950 dark:text-amber-100">Modo Off-line Ativo</p>
+                <p className="text-xs text-amber-800 dark:text-amber-300/90">
+                  Sem conexão no momento. Digitação e edições estão salvas instantaneamente na Memória RAM e Cache Local.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Sync Success Toast Notification */}
+          {syncToast && syncToast.show && (
+            <div className="mb-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 flex items-center gap-3 text-emerald-900 dark:text-emerald-200 animate-fadeIn transition-all shadow-sm">
+              <div className="p-2 bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl shrink-0">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-bold text-emerald-950 dark:text-emerald-100">{syncToast.message}</p>
+                {syncToast.subtext && <p className="text-xs text-emerald-800 dark:text-emerald-300/90">{syncToast.subtext}</p>}
+              </div>
+            </div>
+          )}
+
           {/* Banner for Google Integrations */}
           {!user.isAuthenticated && (
             <div className="mb-5 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 text-white p-4 rounded-2xl shadow-sm border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -805,6 +1277,7 @@ export default function App() {
               onDateChange={setSelectedDate}
               onUpdateEventStatus={handleUpdateEventStatus}
               onAddEvent={handleAddEvent}
+              onDeleteEvent={handleDeleteEvent}
               onOpenRouteTab={() => setActiveTab('route')}
               onUpdateContact={handleUpdateContact}
               onUpdateDomicile={handleUpdateDomicile}
@@ -815,6 +1288,8 @@ export default function App() {
             <DomicileManager
               domiciles={domiciles}
               contacts={contacts}
+              events={events}
+              trashItems={trashItems}
               onAddDomicile={handleAddDomicile}
               onUpdateDomicile={handleUpdateDomicile}
               onDeleteDomicile={handleDeleteDomicile}
@@ -829,6 +1304,7 @@ export default function App() {
               contacts={contacts}
               domiciles={domiciles}
               events={events}
+              trashItems={trashItems}
               onAddContact={handleAddContact}
               onUpdateContact={handleUpdateContact}
               onDeleteContact={handleDeleteContact}
@@ -881,12 +1357,6 @@ export default function App() {
         }}
       />
 
-      <GoogleAuthDiagnosticModal
-        isOpen={isDiagnosticModalOpen}
-        onClose={() => setIsDiagnosticModalOpen(false)}
-        onRecheckAuth={checkAuth}
-      />
-
       <SecurityAndBackupModal
         isOpen={isSecurityModalOpen}
         onClose={() => setIsSecurityModalOpen(false)}
@@ -898,6 +1368,53 @@ export default function App() {
         appPin={appPin}
         onSetAppPin={handleSetAppPin}
       />
+
+      <DuplicateMergerModal
+        isOpen={isDuplicateMergerOpen}
+        onClose={() => setIsDuplicateMergerOpen(false)}
+        candidateGroups={candidateDuplicateGroups}
+        onConfirmMerge={handleConfirmMergeDuplicates}
+        onDismissGroup={handleDismissDuplicateGroup}
+      />
+
+      <TrashModal
+        isOpen={isTrashOpen}
+        onClose={() => setIsTrashOpen(false)}
+        trashItems={trashItems}
+        retentionDays={trashRetentionDays}
+        onChangeRetentionDays={handleChangeRetentionDays}
+        onRestoreItem={handleRestoreTrashItem}
+        onRestoreAllItems={handleRestoreAllTrashItems}
+        onPermanentlyDeleteItem={handlePermanentlyDeleteTrashItem}
+        onEmptyTrash={handleEmptyTrash}
+      />
+
+      {/* Gemini AI Assistant Modal */}
+      <GeminiAssistantModal
+        isOpen={isGeminiModalOpen}
+        onClose={() => setIsGeminiModalOpen(false)}
+        contextData={{
+          domicilesCount: domiciles.length,
+          patientsCount: contacts.length,
+          todayVisitsCount: selectedDateVisitsCount
+        }}
+      />
+
+      {/* Floating Action Button for Instant Access to Agente Aguiar IA */}
+      {!isGeminiModalOpen && (
+        <button
+          onClick={() => setIsGeminiModalOpen(true)}
+          className="fixed bottom-20 right-4 z-40 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white p-3.5 rounded-full shadow-2xl border-2 border-emerald-400/50 flex items-center gap-2 group transition-all transform hover:scale-105 active:scale-95 cursor-pointer"
+          title="Abrir Agente Aguiar IA (Assistente Gemini do ACS)"
+        >
+          <Bot className="h-6 w-6 text-amber-300 animate-bounce" />
+          <span className="hidden sm:inline-block font-black text-xs pr-1">IA Aguiar</span>
+          <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500 border border-slate-900"></span>
+          </span>
+        </button>
+      )}
     </div>
   );
 }
