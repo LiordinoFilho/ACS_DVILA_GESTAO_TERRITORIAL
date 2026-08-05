@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { getBrasiliaDateStr } from '../utils/dateUtils';
 import {
   Domicile,
   DomicileMember,
@@ -10,13 +11,16 @@ import {
   cleanMicroareaName,
   getSavedMicroareas,
   saveCustomMicroarea,
-  setDefaultMicroarea
+  setDefaultMicroarea,
+  TrashItem,
+  CalendarEvent
 } from '../types';
 import { extractCleanStreetName, getUniqueStreets } from '../utils/exportUtils';
 import { searchAddressByCEP } from '../services/apiService';
 import { AddressGroupModal } from './AddressGroupModal';
 import { SetDefaultMicroareaModal } from './SetDefaultMicroareaModal';
 import { MicroareaInputSelector } from './MicroareaInputSelector';
+import { InfoTooltip } from './InfoTooltip';
 import {
   Home,
   Plus,
@@ -44,6 +48,8 @@ import {
 interface DomicileManagerProps {
   domiciles: Domicile[];
   contacts: GoogleContact[];
+  events?: CalendarEvent[];
+  trashItems?: TrashItem[];
   onAddDomicile: (domicile: Domicile) => void;
   onUpdateDomicile: (domicile: Domicile) => void;
   onDeleteDomicile: (id: string) => void;
@@ -69,6 +75,8 @@ const RELATIONSHIP_OPTIONS: FamilyRelationship[] = [
 export const DomicileManager: React.FC<DomicileManagerProps> = ({
   domiciles,
   contacts,
+  events = [],
+  trashItems = [],
   onAddDomicile,
   onUpdateDomicile,
   onDeleteDomicile,
@@ -201,7 +209,7 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
       membersCount: typeof membersCount === 'number' ? membersCount : undefined,
       notes,
       familyMembers: [],
-      createdAt: new Date().toISOString().split('T')[0]
+      createdAt: getBrasiliaDateStr()
     };
 
     onAddDomicile(newDom);
@@ -241,6 +249,7 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
       patientName: patient.name,
       relationship: isHead ? 'Responsável Familiar' : relationship,
       isHeadOfHousehold: isHead,
+      manuallySetHeadOfHousehold: isHead ? true : targetDom.familyMembers[existingIndex]?.manuallySetHeadOfHousehold,
       cns: patient.cns,
       birthDate: patient.birthDate,
       phone: patient.phone
@@ -254,6 +263,7 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
 
     const updatedDomicile: Domicile = {
       ...targetDom,
+      hasManuallySetHeadOfHousehold: isHead || targetDom.hasManuallySetHeadOfHousehold,
       familyMembers: updatedMembers
     };
 
@@ -297,27 +307,26 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200/80 p-1 rounded-xl">
             <button
               onClick={() => setIsAddressGroupModalOpen(true)}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-emerald-600/20 transition"
-              title="Agrupamento Automático por CEP & Residência ativado para todos os cadastros"
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer"
             >
-              <Sparkles className="h-4 w-4" />
-              Agrupar por CEP & Residência
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Agrupar CEP</span>
             </button>
-            <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2.5 py-1 rounded-full border border-emerald-300 flex items-center gap-1 shadow-xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Automático Ativo
-            </span>
+            <InfoTooltip
+              title="Agrupamento por CEP e Endereço"
+              content="Organiza automaticamente residências e agrupa famílias pelo mesmo CEP e logradouro."
+            />
           </div>
 
           <button
             onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-md shadow-teal-600/20 transition"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-teal-600/20 transition cursor-pointer"
           >
             <Plus className="h-4 w-4" />
-            Novo Domicílio
+            <span>Novo Domicílio</span>
           </button>
         </div>
       </div>
@@ -761,11 +770,17 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
                   <input
                     type="text"
                     required
+                    list="domicile-streets-list"
                     placeholder="Ex: Av. Paulista"
                     value={street}
                     onChange={(e) => setStreet(e.target.value)}
                     className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800"
                   />
+                  <datalist id="domicile-streets-list">
+                    {availableStreets.map((st) => (
+                      <option key={st} value={st} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Número *</label>
@@ -1082,6 +1097,8 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
         onClose={() => setIsAddressGroupModalOpen(false)}
         contacts={contacts}
         domiciles={domiciles}
+        events={events}
+        trashItems={trashItems}
         onApplyGrouping={(updatedContacts, updatedDomiciles) => {
           if (onApplyGrouping) {
             onApplyGrouping(updatedContacts, updatedDomiciles);

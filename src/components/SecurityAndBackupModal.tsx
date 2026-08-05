@@ -66,6 +66,7 @@ export const SecurityAndBackupModal: React.FC<SecurityAndBackupModalProps> = ({
 
   // Snapshots
   const [snapshots, setSnapshots] = useState<BackupSnapshot[]>([]);
+  const [isLoadingDriveBackup, setIsLoadingDriveBackup] = useState(false);
 
   // Security / PIN setup
   const [newPin, setNewPin] = useState('');
@@ -130,7 +131,32 @@ export const SecurityAndBackupModal: React.FC<SecurityAndBackupModalProps> = ({
     }
   };
 
-  // 3. Handle File Selection for Restore
+  // 3. Fetch Backup from Google Drive
+  const handleFetchDriveBackup = async () => {
+    setIsLoadingDriveBackup(true);
+    setRestoreError(null);
+    setPendingBackup(null);
+    try {
+      const res = await fetch('/api/drive/backup');
+      const body = await res.json();
+      if (body.success && body.data) {
+        const resParsed = parseAndValidateBackup(JSON.stringify(body.data));
+        if (resParsed.valid && resParsed.backupData) {
+          setPendingBackup(resParsed.backupData);
+        } else {
+          setRestoreError(resParsed.errorMessage || 'Arquivo de backup do Google Drive com formato incompatível.');
+        }
+      } else {
+        setRestoreError(body.error || body.message || 'Nenhum backup automático encontrado no seu Google Drive. Faça um backup primeiro.');
+      }
+    } catch (e: any) {
+      setRestoreError('Erro ao consultar o Google Drive: ' + (e.message || 'Erro de conexão.'));
+    } finally {
+      setIsLoadingDriveBackup(false);
+    }
+  };
+
+  // 4. Handle File Selection for Restore
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -373,15 +399,41 @@ export const SecurityAndBackupModal: React.FC<SecurityAndBackupModalProps> = ({
                 </div>
 
                 <p className="text-xs text-slate-400">
-                  Selecione um arquivo de backup previamente salvo (<strong className="text-slate-300">.acsbackup</strong> ou <strong className="text-slate-300">.json</strong>) para recuperar seus pacientes e visitas.
+                  Você pode restaurar seus dados diretamente do seu Google Drive em 1 clique ou selecionando um arquivo local (<strong className="text-slate-300">.acsbackup</strong> ou <strong className="text-slate-300">.json</strong>).
                 </p>
 
-                <input
-                  type="file"
-                  accept=".acsbackup,.json"
-                  onChange={handleFileChange}
-                  className="block w-full text-xs text-slate-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer"
-                />
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    type="button"
+                    onClick={handleFetchDriveBackup}
+                    disabled={isLoadingDriveBackup}
+                    className="flex-1 py-2.5 px-4 bg-teal-700/80 hover:bg-teal-600 border border-teal-500/40 text-teal-100 font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    {isLoadingDriveBackup ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Buscando no Drive...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CloudUpload className="h-4 w-4" />
+                        <span>Buscar Backup no Google Drive ☁️</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800/80">
+                  <label className="block text-[11px] font-bold text-slate-400 mb-1.5">
+                    Ou selecione um arquivo salvo localmente:
+                  </label>
+                  <input
+                    type="file"
+                    accept=".acsbackup,.json"
+                    onChange={handleFileChange}
+                    className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 cursor-pointer"
+                  />
+                </div>
 
                 {restoreError && (
                   <p className="text-xs font-bold text-rose-400 bg-rose-500/10 p-3 rounded-xl border border-rose-500/20">

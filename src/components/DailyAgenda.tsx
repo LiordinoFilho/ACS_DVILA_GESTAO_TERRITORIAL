@@ -3,7 +3,8 @@ import { CalendarEvent, GoogleContact, Domicile, VisitStatus } from '../types';
 import { VisitStatusButtons, VisitStatusBadge } from './VisitStatusButtons';
 import { VisitExecutionModal } from './VisitExecutionModal';
 import { VisitSummaryModal } from './VisitSummaryModal';
-import { generateRecurringEvents, addDays } from '../utils/acsScheduler';
+import { generateRecurringEvents } from '../utils/acsScheduler';
+import { getBrasiliaDateStr, formatBrasiliaDateDisplay, addDaysBrasilia } from '../utils/dateUtils';
 import {
   MapPin,
   Phone,
@@ -25,8 +26,10 @@ import {
   Home,
   Repeat,
   FolderOpen,
-  FileText
+  FileText,
+  Trash2
 } from 'lucide-react';
+import { InfoTooltip } from './InfoTooltip';
 
 interface DailyAgendaProps {
   events: CalendarEvent[];
@@ -36,6 +39,7 @@ interface DailyAgendaProps {
   onDateChange?: (date: string) => void;
   onUpdateEventStatus: (eventId: string, newStatus: VisitStatus, observation?: string) => void;
   onAddEvent: (newEvent: Partial<CalendarEvent>) => void;
+  onDeleteEvent?: (eventId: string) => void;
   onOpenRouteTab: () => void;
   onUpdateContact?: (contact: GoogleContact) => void;
   onUpdateDomicile?: (domicile: Domicile) => void;
@@ -67,6 +71,7 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
   onDateChange,
   onUpdateEventStatus,
   onAddEvent,
+  onDeleteEvent,
   onOpenRouteTab,
   onUpdateContact,
   onUpdateDomicile
@@ -93,43 +98,19 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
 
   // Format date helper
   const getDateDisplayInfo = (dateStr: string) => {
-    if (!dateStr) return { isToday: false, title: '', formatted: '' };
-    const [y, m, d] = dateStr.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const isToday = dateStr === todayStr;
-
-    const weekday = dateObj.toLocaleDateString('pt-BR', { weekday: 'long' });
-    const formatted = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-    const weekdayCap = weekday.charAt(0).toUpperCase() + weekday.slice(1);
-    const dayNum = String(d).padStart(2, '0');
-    const monthName = dateObj.toLocaleDateString('pt-BR', { month: 'long' });
-
-    return {
-      isToday,
-      weekday: weekdayCap,
-      formatted,
-      title: isToday ? `Hoje, ${dayNum} de ${monthName}` : `${weekdayCap}, ${dayNum} de ${monthName} de ${y}`
-    };
+    return formatBrasiliaDateDisplay(dateStr);
   };
 
   const dateInfo = getDateDisplayInfo(selectedDate);
 
   const handleDateOffset = (offsetDays: number) => {
     if (!onDateChange) return;
-    const [y, m, d] = selectedDate.split('-').map(Number);
-    const dateObj = new Date(y, m - 1, d);
-    dateObj.setDate(dateObj.getDate() + offsetDays);
-    const year = dateObj.getFullYear();
-    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const day = String(dateObj.getDate()).padStart(2, '0');
-    onDateChange(`${year}-${month}-${day}`);
+    onDateChange(addDaysBrasilia(selectedDate, offsetDays));
   };
 
   const handleSetToday = () => {
     if (onDateChange) {
-      onDateChange(new Date().toISOString().split('T')[0]);
+      onDateChange(getBrasiliaDateStr());
     }
   };
 
@@ -434,6 +415,70 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
         <div className="space-y-4">
           {filteredEvents.map((event, index) => {
             const isEditingNote = editingEventId === event.id;
+            const displayAddress = (() => {
+              // Ignore generic placeholder addresses
+              const hasSpecificAddr = event.address &&
+                event.address !== 'Sem endereço cadastrado' &&
+                event.address !== 'Endereço territorial do paciente' &&
+                event.address.trim() !== '';
+
+              if (hasSpecificAddr) {
+                return event.address;
+              }
+
+              // 1. Lookup contact by contactId
+              let c: GoogleContact | undefined = undefined;
+              if (event.contactId) {
+                c = contacts.find((item) => item.id === event.contactId);
+              }
+
+              // 2. Lookup contact by contactName
+              if (!c && event.contactName) {
+                c = contacts.find((item) => item.name.toLowerCase() === event.contactName?.toLowerCase());
+              }
+
+              // 3. Extract patient name from event title (e.g. "Visita Acompanhamento: MARCOS FOSCHINI SICORIA" or "... - MARCOS")
+              if (!c && event.title) {
+                const titleParts = event.title.split(/[:\-]/);
+                if (titleParts.length > 1) {
+                  const extractedName = titleParts[titleParts.length - 1].trim();
+                  if (extractedName.length >= 3) {
+                    c = contacts.find(
+                      (item) => item.name.toLowerCase() === extractedName.toLowerCase() ||
+                                item.name.toLowerCase().includes(extractedName.toLowerCase()) ||
+                                extractedName.toLowerCase().includes(item.name.toLowerCase())
+                    );
+                  }
+                }
+              }
+
+              // If contact found, use their updated address or domicile address
+              if (c) {
+                if (c.address && c.address !== 'Sem endereço cadastrado' && c.address.trim() !== '') {
+                  return c.address;
+                }
+                if (c.domicileId && domiciles) {
+                  const d = domiciles.find((dom) => dom.id === c.domicileId);
+                  if (d) {
+                    const compStr = d.complement ? `, ${d.complement}` : '';
+                    return `${d.street}, ${d.number}${compStr} - ${d.neighborhood}`;
+                  }
+                }
+              }
+
+              // 4. Lookup by event.domicileId
+              if (event.domicileId && domiciles) {
+                const d = domiciles.find((dom) => dom.id === event.domicileId);
+                if (d) {
+                  const compStr = d.complement ? `, ${d.complement}` : '';
+                  return `${d.street}, ${d.number}${compStr} - ${d.neighborhood}`;
+                }
+              }
+
+              return event.address || 'Sem endereço cadastrado';
+            })();
+
+            const eventWithResolvedAddress = { ...event, address: displayAddress };
 
             return (
               <div
@@ -462,7 +507,7 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
                   {/* Actions Right */}
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setActiveSummaryEvent(event)}
+                      onClick={() => setActiveSummaryEvent(eventWithResolvedAddress)}
                       className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-xs shadow-blue-600/20"
                       title="Abrir resumo completo com dados de cada morador e exportação PDF para o e-SUS"
                     >
@@ -471,7 +516,7 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
                     </button>
 
                     <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.address)}`}
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(displayAddress)}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-medium transition"
@@ -480,6 +525,20 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
                       Google Maps
                       <ExternalLink className="h-3 w-3 opacity-60" />
                     </a>
+
+                    {onDeleteEvent && (
+                      <button
+                        onClick={() => {
+                          if (confirm(`Deseja enviar a visita "${event.title}" para a Lixeira?`)) {
+                            onDeleteEvent(event.id);
+                          }
+                        }}
+                        className="p-1.5 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-500 border border-slate-200 rounded-xl transition"
+                        title="Enviar visita para a Lixeira"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -517,7 +576,7 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
 
                     <div className="flex items-start gap-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                       <MapPin className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
-                      <span className="font-medium">{event.address}</span>
+                      <span className="font-medium">{displayAddress}</span>
                     </div>
 
                     {event.description && (
@@ -528,7 +587,7 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
 
                     <div className="pt-1">
                       <button
-                        onClick={() => setActiveExecutionEvent(event)}
+                        onClick={() => setActiveExecutionEvent(eventWithResolvedAddress)}
                         className="w-full py-2 px-3 bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 hover:from-slate-800 hover:to-teal-900 text-white rounded-xl text-xs font-bold transition flex items-center justify-between gap-2 shadow-sm"
                       >
                         <span className="flex items-center gap-2">
@@ -727,21 +786,21 @@ export const DailyAgenda: React.FC<DailyAgendaProps> = ({
                   <span className="text-[11px] font-bold text-slate-500">Atalhos de data:</span>
                   <button
                     type="button"
-                    onClick={() => setNewDate(new Date().toISOString().split('T')[0])}
+                    onClick={() => setNewDate(getBrasiliaDateStr())}
                     className="px-2 py-0.5 bg-white hover:bg-blue-100 text-blue-700 text-[11px] font-semibold rounded-lg border border-blue-200"
                   >
                     Hoje
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewDate(addDays(new Date(), 1))}
+                    onClick={() => setNewDate(addDaysBrasilia(getBrasiliaDateStr(), 1))}
                     className="px-2 py-0.5 bg-white hover:bg-blue-100 text-blue-700 text-[11px] font-semibold rounded-lg border border-blue-200"
                   >
                     Amanhã
                   </button>
                   <button
                     type="button"
-                    onClick={() => setNewDate(addDays(new Date(), 7))}
+                    onClick={() => setNewDate(addDaysBrasilia(getBrasiliaDateStr(), 7))}
                     className="px-2 py-0.5 bg-white hover:bg-blue-100 text-blue-700 text-[11px] font-semibold rounded-lg border border-blue-200"
                   >
                     +7 dias

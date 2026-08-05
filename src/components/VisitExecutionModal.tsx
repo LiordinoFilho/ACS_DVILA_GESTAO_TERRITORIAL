@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getBrasiliaDateStr } from '../utils/dateUtils';
 import { CalendarEvent, GoogleContact, Domicile, DomicileMember, VisitStatus, FamilyRelationship, PatientHealthProfile, DEFAULT_MICROAREA, MICROAREAS, getSavedMicroareas, cleanMicroareaName } from '../types';
 import {
   FileText,
@@ -67,9 +68,34 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
   if (!isOpen) return null;
 
   // Find linked contact and linked domicile
-  const scheduledContact = contacts.find((c) => c.id === event.contactId || c.name === event.contactName);
+  const scheduledContact = (() => {
+    if (event.contactId) {
+      const c = contacts.find((item) => item.id === event.contactId);
+      if (c) return c;
+    }
+    if (event.contactName) {
+      const c = contacts.find((item) => item.name.toLowerCase() === event.contactName?.toLowerCase());
+      if (c) return c;
+    }
+    if (event.title) {
+      const titleParts = event.title.split(/[:\-]/);
+      if (titleParts.length > 1) {
+        const extractedName = titleParts[titleParts.length - 1].trim();
+        if (extractedName.length >= 3) {
+          const c = contacts.find(
+            (item) => item.name.toLowerCase() === extractedName.toLowerCase() ||
+                      item.name.toLowerCase().includes(extractedName.toLowerCase()) ||
+                      extractedName.toLowerCase().includes(item.name.toLowerCase())
+          );
+          if (c) return c;
+        }
+      }
+    }
+    return undefined;
+  })();
+
   const scheduledDomicile = domiciles.find(
-    (d) => d.id === event.domicileId || d.id === scheduledContact?.domicileId || `${d.street}, ${d.number}`.toLowerCase().includes(event.address.toLowerCase())
+    (d) => d.id === event.domicileId || d.id === scheduledContact?.domicileId || (event.address && `${d.street}, ${d.number}`.toLowerCase().includes(event.address.toLowerCase()))
   );
 
   // Get list of family members living in this domicile
@@ -364,6 +390,7 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
       microarea: pMicroarea,
       familyRelationship: pFamilyRel,
       isHeadOfHousehold: pIsHead,
+      manuallySetHeadOfHousehold: pIsHead || pFamilyRel === 'Responsável Familiar' ? true : undefined,
       labels: Array.from(new Set([...(targetContactForEdit.labels || []), ...autoLabels])),
       healthProfile: {
         isPregnant: hpIsPregnant,
@@ -517,7 +544,7 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
       hasPets: domPets,
       petsDetail: domPetsDetail,
       familyMembers: domMembers,
-      createdAt: scheduledDomicile?.createdAt || new Date().toISOString().split('T')[0]
+      createdAt: scheduledDomicile?.createdAt || getBrasiliaDateStr()
     };
 
     onUpdateDomicile(updatedDom);

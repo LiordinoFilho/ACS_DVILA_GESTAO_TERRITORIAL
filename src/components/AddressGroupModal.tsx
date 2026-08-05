@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GoogleContact, Domicile } from '../types';
+import { GoogleContact, Domicile, TrashItem, CalendarEvent } from '../types';
 import { processAndGroupContactsByCEP, ProcessResult } from '../utils/domicileGroupUtils';
 import { Sparkles, Home, Building, CheckCircle2, AlertCircle, Loader2, RefreshCw, Users, MapPin, ExternalLink } from 'lucide-react';
 
@@ -8,6 +8,8 @@ interface AddressGroupModalProps {
   onClose: () => void;
   contacts: GoogleContact[];
   domiciles: Domicile[];
+  events?: CalendarEvent[];
+  trashItems?: TrashItem[];
   onApplyGrouping: (updatedContacts: GoogleContact[], updatedDomiciles: Domicile[]) => void;
   isAuthenticatedWithGoogle?: boolean;
 }
@@ -17,6 +19,8 @@ export const AddressGroupModal: React.FC<AddressGroupModalProps> = ({
   onClose,
   contacts,
   domiciles,
+  events = [],
+  trashItems = [],
   onApplyGrouping,
   isAuthenticatedWithGoogle = false
 }) => {
@@ -31,7 +35,11 @@ export const AddressGroupModal: React.FC<AddressGroupModalProps> = ({
     setIsProcessing(true);
     setSyncStatus('');
     try {
-      const res = await processAndGroupContactsByCEP(contacts, domiciles);
+      const res = await processAndGroupContactsByCEP(contacts, domiciles, {
+        autoCreateMissingDomiciles: true,
+        trashItems,
+        events
+      });
       setResult(res);
     } catch (err: any) {
       console.error('Erro ao processar CEPs e agrupar domicílios:', err);
@@ -60,7 +68,7 @@ export const AddressGroupModal: React.FC<AddressGroupModalProps> = ({
             });
             successCount++;
           } catch (e) {
-            console.error('Erro ao atualizar contato no Google:', e);
+            console.warn('Aviso ao atualizar contato no Google:', e);
           }
         }
       }

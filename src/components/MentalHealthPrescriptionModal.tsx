@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getBrasiliaDateStr } from '../utils/dateUtils';
 import { Brain, Calendar, Pill, Search, Plus, Trash2, Check, AlertCircle, Clock, X, ShieldAlert, Link as LinkIcon, ExternalLink, FileText } from 'lucide-react';
 
 export interface PsychiatricMedication {
@@ -68,7 +69,7 @@ export const MentalHealthPrescriptionModal: React.FC<MentalHealthPrescriptionMod
 }) => {
   if (!isOpen) return null;
 
-  const todayIso = new Date().toISOString().split('T')[0];
+  const todayIso = getBrasiliaDateStr();
   const [prescriptionDate, setPrescriptionDate] = useState<string>(initialDate || todayIso);
   const [selectedMeds, setSelectedMeds] = useState<string[]>(initialMeds);
   const [prescriptionLink, setPrescriptionLink] = useState<string>(initialLink || '');

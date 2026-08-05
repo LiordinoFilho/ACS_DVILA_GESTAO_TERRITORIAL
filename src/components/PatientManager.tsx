@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { getBrasiliaDateStr } from '../utils/dateUtils';
 import {
   GoogleContact,
   Domicile,
@@ -11,7 +12,8 @@ import {
   cleanMicroareaName,
   getSavedMicroareas,
   saveCustomMicroarea,
-  setDefaultMicroarea
+  setDefaultMicroarea,
+  TrashItem
 } from '../types';
 import { searchAddressByCEP } from '../services/apiService';
 import { generateAutoVisitsForPatient, generateRecurringEvents, addDays, calculateDetailedAge } from '../utils/acsScheduler';
@@ -21,8 +23,10 @@ import { ReportExportModal } from './ReportExportModal';
 import { SharePatientModal } from './SharePatientModal';
 import { ImportSharedDataModal } from './ImportSharedDataModal';
 import { AddressGroupModal } from './AddressGroupModal';
+import { PatientAdviceModal } from './PatientAdviceModal';
 import { SetDefaultMicroareaModal } from './SetDefaultMicroareaModal';
 import { MicroareaInputSelector } from './MicroareaInputSelector';
+import { InfoTooltip } from './InfoTooltip';
 import { getContactStreet, getUniqueStreets, exportPatientsToExcel } from '../utils/exportUtils';
 import {
   Users,
@@ -70,6 +74,7 @@ import {
 interface PatientManagerProps {
   contacts: GoogleContact[];
   domiciles: Domicile[];
+  trashItems?: TrashItem[];
   events?: CalendarEvent[];
   onAddContact: (contact: GoogleContact) => void;
   onUpdateContact: (contact: GoogleContact) => void;
@@ -91,6 +96,7 @@ const WhatsAppIcon: React.FC<{ className?: string }> = ({ className = "h-4 w-4" 
 export const PatientManager: React.FC<PatientManagerProps> = ({
   contacts,
   domiciles,
+  trashItems = [],
   events = [],
   onAddContact,
   onUpdateContact,
@@ -268,7 +274,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
   const [healthNotes, setHealthNotes] = useState('');
 
   // Mental Health Prescription States
-  const [mentalHealthPrescriptionDate, setMentalHealthPrescriptionDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [mentalHealthPrescriptionDate, setMentalHealthPrescriptionDate] = useState<string>(getBrasiliaDateStr());
   const [mentalHealthMedications, setMentalHealthMedications] = useState<string[]>([]);
   const [mentalHealthPrescriptionLink, setMentalHealthPrescriptionLink] = useState<string>('');
   const [isMentalHealthModalOpen, setIsMentalHealthModalOpen] = useState(false);
@@ -283,12 +289,15 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
   // Schedule Visit Modal State
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleTargetContact, setScheduleTargetContact] = useState<GoogleContact | null>(null);
-  const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]);
-  const [scheduleStartTime, setScheduleStartTime] = useState('08:30');
-  const [scheduleEndTime, setScheduleEndTime] = useState('09:30');
+  const [scheduleDate, setScheduleDate] = useState(getBrasiliaDateStr());
+  const [scheduleStartTime, setScheduleStartTime] = useState('09:00');
+  const [scheduleEndTime, setScheduleEndTime] = useState('18:00');
   const [scheduleReason, setScheduleReason] = useState('Acompanhamento de Saúde');
   const [scheduleRecurrence, setScheduleRecurrence] = useState<'none' | 'weekly' | 'biweekly' | 'monthly' | 'six_months' | 'yearly'>('none');
   const [scheduleDescription, setScheduleDescription] = useState('');
+
+  // AI Advice Target Patient Modal State
+  const [aiAdviceTargetPatient, setAiAdviceTargetPatient] = useState<GoogleContact | null>(null);
 
   // Helper function to launch WhatsApp
   const handleOpenWhatsApp = (phoneNumber: string, patientName: string) => {
@@ -318,7 +327,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
 
   const handleOpenQuickMentalHealthModal = (contact: GoogleContact) => {
     setMentalHealthTargetPatient({ id: contact.id, name: contact.name });
-    setMentalHealthPrescriptionDate(contact.healthProfile?.mentalHealthPrescriptionDate || new Date().toISOString().split('T')[0]);
+    setMentalHealthPrescriptionDate(contact.healthProfile?.mentalHealthPrescriptionDate || getBrasiliaDateStr());
     setMentalHealthMedications(contact.healthProfile?.mentalHealthMedications || []);
     setMentalHealthPrescriptionLink(contact.healthProfile?.mentalHealthPrescriptionLink || '');
     setIsMentalHealthModalOpen(true);
@@ -394,7 +403,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
     setIsBolsaFamilia(hp?.isBolsaFamilia || false);
     setHasSpecialNeeds(hp?.hasSpecialNeeds || false);
     setHasMentalCondition(hp?.hasMentalCondition || false);
-    setMentalHealthPrescriptionDate(hp?.mentalHealthPrescriptionDate || new Date().toISOString().split('T')[0]);
+    setMentalHealthPrescriptionDate(hp?.mentalHealthPrescriptionDate || getBrasiliaDateStr());
     setMentalHealthMedications(hp?.mentalHealthMedications || []);
     setMentalHealthPrescriptionLink(hp?.mentalHealthPrescriptionLink || '');
     setIsVaccinationUpToDate(hp?.isVaccinationUpToDate ?? true);
@@ -467,7 +476,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
     setIsBolsaFamilia(false);
     setHasSpecialNeeds(false);
     setHasMentalCondition(false);
-    setMentalHealthPrescriptionDate(new Date().toISOString().split('T')[0]);
+    setMentalHealthPrescriptionDate(getBrasiliaDateStr());
     setMentalHealthMedications([]);
     setMentalHealthPrescriptionLink('');
     setIsVaccinationUpToDate(true);
@@ -634,6 +643,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
       domicileId,
       familyRelationship,
       isHeadOfHousehold,
+      manuallySetHeadOfHousehold: isHeadOfHousehold || familyRelationship === 'Responsável Familiar' ? true : undefined,
       labels: autoLabels,
       notes,
       avatarUrl: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150`,
@@ -659,9 +669,9 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
   // Open Schedule Modal with Date & Recurrence Picker
   const handleOpenScheduleModal = (contact: GoogleContact) => {
     setScheduleTargetContact(contact);
-    setScheduleDate(new Date().toISOString().split('T')[0]);
-    setScheduleStartTime('08:30');
-    setScheduleEndTime('09:30');
+    setScheduleDate(getBrasiliaDateStr());
+    setScheduleStartTime('09:00');
+    setScheduleEndTime('18:00');
     setScheduleReason('Acompanhamento de Saúde');
     setScheduleRecurrence('none');
     setScheduleDescription(`Visita Domiciliar ACS para o munícipe ${contact.name}`);
@@ -854,69 +864,93 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          <button
-            onClick={() => setIsReportModalOpen(true)}
-            className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
-            title="Relatório em PDF e Planilha Excel para qualquer Categoria e Rua"
-          >
-            <Printer className="h-4 w-4" />
-            <span>Relatório / PDF & Excel</span>
-          </button>
+          <div className="flex items-center gap-1 bg-blue-50 border border-blue-200/80 p-1 rounded-xl">
+            <button
+              onClick={() => setIsReportModalOpen(true)}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition shadow-2xs"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              <span>Relatórios</span>
+            </button>
+            <InfoTooltip
+              title="Relatórios e PDFs"
+              content="Gere relatórios customizados em PDF e planilhas Excel por Rua, Microárea e Categoria e-SUS."
+            />
+          </div>
 
-          <button
-            onClick={() => downloadCSV('modelo_pacientes_acs.csv', generateSampleCSV())}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition"
-            title="Baixar modelo de arquivo .CSV pré-formatado"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span>Modelo .CSV</span>
-          </button>
+          <div className="flex items-center gap-1 bg-slate-100 border border-slate-200 p-1 rounded-xl">
+            <button
+              onClick={() => downloadCSV('modelo_pacientes_acs.csv', generateSampleCSV())}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-bold transition"
+            >
+              <Download className="h-3.5 w-3.5" />
+              <span>Modelo .CSV</span>
+            </button>
+            <InfoTooltip
+              title="Modelo CSV"
+              content="Baixe a planilha modelo pré-formatada para preencher e importar munícipes em lote."
+            />
+          </div>
 
-          <button
-            onClick={handleOpenCsvModal}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
-            title="Importar lista completa de munícipes via arquivo .CSV"
-          >
-            <Upload className="h-3.5 w-3.5" />
-            <span>Importar .CSV</span>
-          </button>
+          <div className="flex items-center gap-1 bg-teal-50 border border-teal-200/80 p-1 rounded-xl">
+            <button
+              onClick={handleOpenCsvModal}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition shadow-2xs"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Importar .CSV</span>
+            </button>
+            <InfoTooltip
+              title="Importar Cadastros"
+              content="Carregue lista completa de munícipes via arquivo CSV com validação automática."
+            />
+          </div>
 
-          <button
-            onClick={() => setIsImportSharedModalOpen(true)}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
-            title="Importar ficha de paciente transferida por outro Agente de Saúde (.JSON)"
-          >
-            <FileUp className="h-3.5 w-3.5" />
-            <span>Importar Ficha Recebida</span>
-          </button>
+          <div className="flex items-center gap-1 bg-indigo-50 border border-indigo-200/80 p-1 rounded-xl">
+            <button
+              onClick={() => setIsImportSharedModalOpen(true)}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-2xs"
+            >
+              <FileUp className="h-3.5 w-3.5" />
+              <span>Receber Ficha</span>
+            </button>
+            <InfoTooltip
+              title="Importar Ficha Compartilhada"
+              content="Importe fichas de munícipes transferidos por outros Agentes de Saúde via arquivo JSON."
+            />
+          </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200/80 p-1 rounded-xl">
             <button
               onClick={() => setIsAddressGroupModalOpen(true)}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition"
-              title="Agrupamento automático ativo! Normaliza CEP, busca ViaCEP, preenche Casa no Google Contatos e agrupa domicílios sem interferência."
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-lg text-xs font-bold transition shadow-2xs"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              <span>Agrupar por CEP & Residência</span>
+              <span>Agrupar CEP</span>
             </button>
-            <span className="hidden sm:flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-emerald-300">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Auto
-            </span>
+            <InfoTooltip
+              title="Agrupamento Automático"
+              content="Normaliza CEP via ViaCEP e agrupa domicílios e famílias sem alterar dados."
+            />
+          </div>
+
+          <div className="flex items-center gap-1 bg-amber-50 border border-amber-200/80 p-1 rounded-xl">
+            <button
+              onClick={handleRunAllAutoSchedulers}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-xs font-bold transition shadow-2xs"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              <span>Auto Agendamento</span>
+            </button>
+            <InfoTooltip
+              title="Agendamento Automático"
+              content="Cria automaticamente visitas prioritárias no e-SUS para gestantes, hipertensos, acamados e idosos."
+            />
           </div>
 
           <button
-            onClick={handleRunAllAutoSchedulers}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-bold shadow-xs transition"
-            title="Gerar automaticamente agendamentos e alertas e-SUS para todos os grupos prioritários"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            <span>Agendamento Automático</span>
-          </button>
-
-          <button
             onClick={handleStartNew}
-            className="flex items-center justify-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 transition"
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-md shadow-emerald-600/20 transition cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             <span>Novo Cadastro</span>
@@ -1463,6 +1497,15 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
                     </button>
 
                     <button
+                      onClick={() => setAiAdviceTargetPatient(contact)}
+                      className="px-2.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl text-xs font-black transition flex items-center gap-1 shrink-0 shadow-sm"
+                      title="Gerar orientações de visita e observações clínicas com IA Gemini"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                      <span>Orientação IA</span>
+                    </button>
+
+                    <button
                       onClick={() => handleOpenShareModal(contact)}
                       className="px-2.5 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-xs font-bold transition flex items-center gap-1 shrink-0"
                       title="Compartilhar paciente individual, família e moradia com outro ACS"
@@ -1733,6 +1776,7 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
                         <label className="block text-xs font-bold text-slate-700 mb-1">Logradouro / Rua</label>
                         <input
                           type="text"
+                          list="patient-streets-list"
                           placeholder="Ex: Av. Paulista"
                           value={addressStreet}
                           onChange={(e) => {
@@ -1742,6 +1786,11 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
                           }}
                           className="w-full text-xs p-2.5 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800"
                         />
+                        <datalist id="patient-streets-list">
+                          {availableStreets.map((st) => (
+                            <option key={st} value={st} />
+                          ))}
+                        </datalist>
                       </div>
 
                       <div>
@@ -2676,6 +2725,8 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
         onClose={() => setIsAddressGroupModalOpen(false)}
         contacts={contacts}
         domiciles={domiciles}
+        events={events}
+        trashItems={trashItems}
         onApplyGrouping={(updatedContacts, updatedDomiciles) => {
           if (onApplyGrouping) {
             onApplyGrouping(updatedContacts, updatedDomiciles);
@@ -2694,6 +2745,13 @@ export const PatientManager: React.FC<PatientManagerProps> = ({
             await onApplyMicroareaToAll(newMicroarea, applyToExisting);
           }
         }}
+      />
+
+      {/* Patient AI Advice Modal */}
+      <PatientAdviceModal
+        isOpen={!!aiAdviceTargetPatient}
+        patient={aiAdviceTargetPatient}
+        onClose={() => setAiAdviceTargetPatient(null)}
       />
     </div>
   );

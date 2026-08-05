@@ -1,6 +1,8 @@
 import React from 'react';
 import { UserProfile } from '../types';
-import { Calendar, RefreshCw, MapPin, Users, LogOut, Sparkles, Home, Activity, HeartPulse, ShieldAlert, ExternalLink, ShieldCheck, HardDrive, Palette, Smartphone } from 'lucide-react';
+import { formatBrasiliaDateDisplay, addDaysBrasilia, getBrasiliaDateStr } from '../utils/dateUtils';
+import { Calendar, RefreshCw, MapPin, Users, LogOut, Sparkles, Home, Activity, HeartPulse, ShieldAlert, ExternalLink, ShieldCheck, HardDrive, Palette, Smartphone, Trash2, GitMerge, Bot } from 'lucide-react';
+import { InfoTooltip } from './InfoTooltip';
 
 // Official Google Contacts SVG Icon Component
 const GoogleContactsIcon: React.FC<{ className?: string }> = ({ className = "h-4 w-4" }) => (
@@ -31,6 +33,16 @@ const SissambIcon: React.FC<{ className?: string }> = ({ className = "h-4 w-4" }
   </svg>
 );
 
+// Gemini Speech Bubble with Star Icon Component 💬🌟
+const GeminiSpeechStarIcon: React.FC<{ className?: string }> = ({ className = "h-4 w-4" }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    {/* Speech Bubble outline & semi-transparent fill */}
+    <path d="M20 2H4C2.9 2 2 2.9 2 4V15C2 16.1 2.9 17 4 17H17L21 21V4C21 2.9 20.1 2 20 2Z" fill="#FEF3C7" fillOpacity="0.2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    {/* Golden Star inside */}
+    <path d="M12 5.2L13.2 7.7L15.9 8.1L13.9 10L14.4 12.7L12 11.4L9.6 12.7L10.1 10L8.1 8.1L10.8 7.7L12 5.2Z" fill="#FCD34D" stroke="#F59E0B" strokeWidth="0.8" strokeLinejoin="round" />
+  </svg>
+);
+
 // Official CADSUS / Cartão SUS SVG Icon Component
 const CadSusIcon: React.FC<{ className?: string }> = ({ className = "h-4 w-4" }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -52,14 +64,43 @@ const CientificaLabIcon: React.FC<{ className?: string }> = ({ className = "h-4 
   </svg>
 );
 
+// Trava Indestrutível do Logo do App (SVG Nativo + Image Error Fallback)
+const ACSAppLogo: React.FC = () => {
+  const [imgError, setImgError] = React.useState(false);
+
+  return (
+    <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-500 p-0.5 flex items-center justify-center shadow-xs shadow-emerald-500/20 shrink-0 overflow-hidden relative">
+      {!imgError ? (
+        <img
+          src="/pwa-icon.jpg"
+          alt="ACS D'Vila Logo"
+          onError={() => setImgError(true)}
+          className="h-full w-full object-cover rounded-[10px]"
+        />
+      ) : (
+        <div className="w-full h-full bg-gradient-to-br from-emerald-700 to-teal-900 flex flex-col items-center justify-center text-white rounded-[10px] select-none p-1">
+          <svg className="w-5 h-5 text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          <span className="text-[7.5px] font-black tracking-tighter leading-none text-emerald-200 mt-0.5">ACS</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface HeaderProps {
   user: UserProfile;
   selectedDate: string;
   onDateChange: (date: string) => void;
   onConnectGoogle: () => void;
-  onOpenDiagnostic?: () => void;
   onOpenSecurityAndBackup?: () => void;
   onOpenThemeSelector?: () => void;
+  onOpenDuplicateMerger?: () => void;
+  onOpenGeminiAssistant?: () => void;
+  duplicateCount?: number;
+  onOpenTrash?: () => void;
+  trashCount?: number;
   onLogout: () => void;
   onRefresh: () => void;
   isLoading: boolean;
@@ -74,9 +115,13 @@ export const Header: React.FC<HeaderProps> = ({
   selectedDate,
   onDateChange,
   onConnectGoogle,
-  onOpenDiagnostic,
   onOpenSecurityAndBackup,
   onOpenThemeSelector,
+  onOpenDuplicateMerger,
+  onOpenGeminiAssistant,
+  duplicateCount = 0,
+  onOpenTrash,
+  trashCount = 0,
   onLogout,
   onRefresh,
   isLoading,
@@ -87,57 +132,39 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
 
   const formatDateDisplay = (dateStr: string) => {
-    const [y, m, d] = dateStr.split('-');
-    const dateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const isToday = dateStr === todayStr;
-
-    const weekday = dateObj.toLocaleDateString('pt-BR', { weekday: 'long' });
-    const formatted = dateObj.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-
-    return {
-      title: isToday ? `Hoje, ${d} de ${dateObj.toLocaleDateString('pt-BR', { month: 'short' })}` : `${d} de ${dateObj.toLocaleDateString('pt-BR', { month: 'short' })}`,
-      subtitle: `${weekday.charAt(0).toUpperCase() + weekday.slice(1)} • ${formatted}`
-    };
+    return formatBrasiliaDateDisplay(dateStr);
   };
 
   const setDateOffset = (offsetDays: number) => {
-    const dateObj = new Date(selectedDate + 'T12:00:00');
-    dateObj.setDate(dateObj.getDate() + offsetDays);
-    const y = dateObj.getFullYear();
-    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const d = String(dateObj.getDate()).padStart(2, '0');
-    onDateChange(`${y}-${m}-${d}`);
+    const nextDate = addDaysBrasilia(selectedDate, offsetDays);
+    onDateChange(nextDate);
   };
 
   const setToday = () => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    onDateChange(todayStr);
+    onDateChange(getBrasiliaDateStr());
   };
 
   return (
     <header className="bg-white/95 backdrop-blur-md text-slate-800 border-b border-slate-200/90 sticky top-0 z-40 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Top bar with Branding & User info */}
-        <div className="flex flex-col sm:flex-row items-center justify-between py-3 gap-3 border-b border-slate-100">
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
-            <div className="flex items-center gap-2.5">
-              <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-cyan-500 p-0.5 flex items-center justify-center shadow-xs shadow-emerald-500/20">
-                <div className="h-full w-full bg-white rounded-[10px] flex items-center justify-center">
-                  <HeartPulse className="h-5 w-5 text-emerald-600" />
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-extrabold text-slate-900 tracking-tight leading-tight">
-                    ACS D'Vila <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2 py-0.5 rounded-full border border-emerald-200/80">Território & Saúde</span>
+        {/* Row 1: Top bar with Branding & App Controls */}
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between py-2.5 gap-3 border-b border-slate-100">
+          <div className="flex items-center gap-3 justify-between xl:justify-start shrink-0">
+            <div className="flex items-center gap-3 shrink-0">
+              <ACSAppLogo />
+              <div className="shrink-0">
+                <div className="flex items-center gap-2 whitespace-nowrap">
+                  <h1 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight leading-none whitespace-nowrap">
+                    ACS D'Vila
                   </h1>
+                  <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2.5 py-0.5 rounded-full border border-emerald-200/80 whitespace-nowrap shrink-0 inline-flex items-center">
+                    Território & Saúde
+                  </span>
                 </div>
-                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                  <span className="text-emerald-700 font-bold">Agente Comunitário de Saúde</span>
+                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-1 whitespace-nowrap">
+                  <span className="text-emerald-700 font-bold whitespace-nowrap">Agente Comunitário de Saúde</span>
                   <span className="text-slate-300">•</span>
-                  <span>Google Contatos / Agenda / Maps</span>
+                  <span className="text-slate-500 whitespace-nowrap">Google Contatos / Agenda / Maps</span>
                 </p>
               </div>
             </div>
@@ -146,109 +173,122 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onRefresh}
               disabled={isLoading}
-              className="sm:hidden p-2 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 transition border border-slate-200"
+              className="xl:hidden p-2 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 transition border border-slate-200 shrink-0"
               title="Sincronizar"
             >
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-emerald-600' : ''}`} />
             </button>
           </div>
 
-          {/* User Auth & Integrations Status */}
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto justify-end flex-wrap sm:flex-nowrap">
-            
-            {/* Direct External Apps & Health Systems Quick Links */}
-            <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto no-scrollbar max-w-full py-0.5">
-              <a
-                href="https://contacts.google.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-blue-50/80 text-slate-700 hover:text-blue-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-blue-300 transition shadow-2xs group shrink-0"
-                title="Abrir Google Contatos diretamente em uma nova aba ou aplicativo do celular"
-              >
-                <GoogleContactsIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                <span className="hidden lg:inline">Google Contatos</span>
-                <span className="lg:hidden">Contatos</span>
-                <ExternalLink className="h-3 w-3 text-blue-500 opacity-80 group-hover:opacity-100" />
-              </a>
+          {/* User Auth & Main Action Buttons */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap justify-start xl:justify-end">
+            {onOpenGeminiAssistant && (
+              <div className="flex items-center gap-0.5 bg-emerald-50/90 border border-emerald-300/80 p-0.5 rounded-xl shadow-2xs">
+                <button
+                  onClick={onOpenGeminiAssistant}
+                  className="px-2.5 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white rounded-lg text-xs font-black transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs active:scale-95"
+                >
+                  <GeminiSpeechStarIcon className="h-4 w-4 text-amber-300 drop-shadow-xs" />
+                  <span>IA Aguiar</span>
+                  <span className="text-[9px] bg-amber-400 text-slate-950 font-black px-1 rounded-sm uppercase tracking-tighter">Gemini</span>
+                </button>
+                <InfoTooltip
+                  title="Agente Aguiar IA (Gemini 3.6)"
+                  content="Assistente Virtual Oficial para tirar dúvidas de e-SUS, VD, fichas, grupos prioritários e orientações técnicas de saúde."
+                />
+              </div>
+            )}
 
-              <a
-                href="https://calendar.google.com/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-blue-50/80 text-slate-700 hover:text-blue-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-blue-300 transition shadow-2xs group shrink-0"
-                title="Abrir Google Agenda diretamente em uma nova aba ou aplicativo do celular"
-              >
-                <GoogleCalendarIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                <span className="hidden lg:inline">Google Agenda</span>
-                <span className="lg:hidden">Agenda</span>
-                <ExternalLink className="h-3 w-3 text-blue-500 opacity-80 group-hover:opacity-100" />
-              </a>
+            {onOpenSecurityAndBackup && (
+              <div className="flex items-center gap-0.5 bg-teal-50/80 border border-teal-200/80 p-0.5 rounded-xl">
+                <button
+                  onClick={onOpenSecurityAndBackup}
+                  className="px-2 py-1.5 sm:px-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Segurança</span>
+                </button>
+                <InfoTooltip
+                  title="Backup & Segurança"
+                  content="Gerencie backup no Google Drive, exportação local em JSON, restauração de emergência e código PIN da LGPD."
+                />
+              </div>
+            )}
 
-              <a
-                href="https://sissamb.osasco.sp.gov.br/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-emerald-50/80 text-slate-700 hover:text-emerald-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-emerald-300 transition shadow-2xs group shrink-0"
-                title="Abrir SISSAMB Saúde Osasco diretamente em uma nova aba ou aplicativo"
-              >
-                <SissambIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                <span className="hidden lg:inline">SISSAMB Osasco</span>
-                <span className="lg:hidden">SISSAMB</span>
-                <ExternalLink className="h-3 w-3 text-emerald-600 opacity-80 group-hover:opacity-100" />
-              </a>
+            {onOpenThemeSelector && (
+              <div className="flex items-center gap-0.5 bg-sky-50/80 border border-sky-200/80 p-0.5 rounded-xl">
+                <button
+                  onClick={onOpenThemeSelector}
+                  className="px-2 py-1.5 sm:px-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs"
+                >
+                  <Palette className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Tema</span>
+                </button>
+                <InfoTooltip
+                  title="Personalização Visual"
+                  content="Personalize cores do mapa territorial, temas gradientes e modo de exibição em tela cheia ou moldura mobile."
+                />
+              </div>
+            )}
 
-              <a
-                href="https://cadastro.saude.gov.br/segcartao/?contextType=external&username=string&contextValue=%2Foam&password=sercure_string&challenge_url=https%3A%2F%2Fcadastro.saude.gov.br%2Fsegcartao&request_id=8285361639685691817&authn_try_count=0&locale=pt_BR&resource_url=http%253A%252F%252Fcadastro.saude.gov.br%252Fnovocartao%252Frestrito%252FusuarioConsulta.jsp"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-sky-50/80 text-slate-700 hover:text-sky-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-sky-300 transition shadow-2xs group shrink-0"
-                title="Abrir CADSUS / Cartão Nacional de Saúde (Ministério da Saúde)"
-              >
-                <CadSusIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                <span className="hidden lg:inline">Cartão SUS (CADSUS)</span>
-                <span className="lg:hidden">CADSUS</span>
-                <ExternalLink className="h-3 w-3 text-sky-600 opacity-80 group-hover:opacity-100" />
-              </a>
+            {onOpenDuplicateMerger && (
+              <div className="flex items-center gap-0.5 bg-amber-50/80 border border-amber-200/80 p-0.5 rounded-xl">
+                <button
+                  onClick={onOpenDuplicateMerger}
+                  className="px-2 py-1.5 sm:px-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-xs font-extrabold transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs relative"
+                >
+                  <GitMerge className="h-3.5 w-3.5 text-slate-950" />
+                  <span className="hidden sm:inline">Unificar</span>
+                  {duplicateCount > 0 && (
+                    <span className="px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-black rounded-full animate-pulse">
+                      {duplicateCount}
+                    </span>
+                  )}
+                </button>
+                <InfoTooltip
+                  title="Unificação Inteligente"
+                  content="Identifica e mescla cadastros duplicados (mesmo CPF, CNS ou Nome) reatrelando o histórico de visitas ao cadastro principal."
+                />
+              </div>
+            )}
 
-              <a
-                href="https://laudos.cientificalab.com.br/laudos/sair/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-cyan-50/80 text-slate-700 hover:text-cyan-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-cyan-300 transition shadow-2xs group shrink-0"
-                title="Abrir Sistema de Laudos CientíficaLab"
-              >
-                <CientificaLabIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                <span className="hidden lg:inline">Laudos CientíficaLab</span>
-                <span className="lg:hidden">CientíficaLab</span>
-                <ExternalLink className="h-3 w-3 text-cyan-600 opacity-80 group-hover:opacity-100" />
-              </a>
-            </div>
+            {onOpenTrash && (
+              <div className="flex items-center gap-0.5 bg-rose-50/80 border border-rose-200/80 p-0.5 rounded-xl">
+                <button
+                  onClick={onOpenTrash}
+                  className="px-2 py-1.5 sm:px-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 shrink-0 cursor-pointer shadow-2xs relative"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Lixeira</span>
+                  {trashCount > 0 && (
+                    <span className="px-1.5 py-0.2 bg-white text-rose-700 text-[10px] font-black rounded-full">
+                      {trashCount}
+                    </span>
+                  )}
+                </button>
+                <InfoTooltip
+                  title="Lixeira Segura"
+                  content="Recupere munícipes, residências e visitas excluídas acidentalmente com retenção configurável."
+                />
+              </div>
+            )}
 
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100/90 border border-slate-200 text-xs">
-              <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
-                <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Modo Off-line Ativo
-              </span>
-              <span className="text-slate-300">|</span>
-              <span className="flex items-center gap-1 text-teal-800 font-bold">
-                <Home className="h-3.5 w-3.5 text-teal-600" /> Domicílios ({domicileCount})
-              </span>
-              <span className="text-slate-300">|</span>
-              <span className="flex items-center gap-1 text-emerald-800 font-bold">
-                <Users className="h-3.5 w-3.5 text-emerald-600" /> Munícipes ({patientCount})
-              </span>
-              <span className="text-slate-300">|</span>
-              <span className="flex items-center gap-1 text-amber-800 font-bold">
-                <MapPin className="h-3.5 w-3.5 text-amber-600" /> Maps
-              </span>
-            </div>
+            <button
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold border border-slate-700 transition shadow-2xs shrink-0 cursor-pointer"
+              title="Sincronizar com Google Contatos e Agenda"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-400' : 'text-slate-300'}`} />
+              Sincronizar
+            </button>
 
             {user.isAuthenticated ? (
-              <div className="flex items-center gap-2.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+              <div className="flex items-center gap-2 bg-slate-100 px-2.5 py-1.5 rounded-xl border border-slate-200 shrink-0">
                 {user.picture ? (
-                  <img src={user.picture} alt={user.name} className="h-7 w-7 rounded-full border border-emerald-500 shadow-2xs" />
+                  <img src={user.picture} alt={user.name} className="h-6 w-6 rounded-full border border-emerald-500 shadow-2xs" />
                 ) : (
-                  <div className="h-7 w-7 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                  <div className="h-6 w-6 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
                     {user.name.charAt(0)}
                   </div>
                 )}
@@ -258,20 +298,20 @@ export const Header: React.FC<HeaderProps> = ({
                 </div>
                 <button
                   onClick={onLogout}
-                  className="p-1 text-slate-400 hover:text-rose-600 transition ml-1"
+                  className="p-1 text-slate-400 hover:text-rose-600 transition ml-0.5"
                   title="Sair do Google"
                 >
                   <LogOut className="h-4 w-4" />
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <span className="hidden sm:inline-flex items-center gap-1 text-xs text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 font-bold">
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="hidden lg:inline-flex items-center gap-1 text-xs text-amber-800 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200 font-bold">
                   <Sparkles className="h-3 w-3 text-amber-600" /> Modo ACS Ativo
                 </span>
                 <button
                   onClick={onConnectGoogle}
-                  className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold px-3.5 py-1.5 rounded-xl text-xs transition shadow-xs"
+                  className="flex items-center gap-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs transition shadow-xs"
                 >
                   <svg className="h-4 w-4" viewBox="0 0 24 24">
                     <path
@@ -295,38 +335,96 @@ export const Header: React.FC<HeaderProps> = ({
                 </button>
               </div>
             )}
+          </div>
+        </div>
 
-            {onOpenSecurityAndBackup && (
-              <button
-                onClick={onOpenSecurityAndBackup}
-                className="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-teal-200/80 cursor-pointer shadow-2xs"
-                title="Backup no Google Drive, Baixar Backup Local, Restaurar e Segurança PIN"
-              >
-                <ShieldCheck className="h-3.5 w-3.5 text-teal-600" />
-                <span>Backup & Segurança</span>
-              </button>
-            )}
-
-            {onOpenThemeSelector && (
-              <button
-                onClick={onOpenThemeSelector}
-                className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-800 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-sky-200/80 cursor-pointer shadow-2xs"
-                title="Personalizar Tema de Fundo em Gradiente e Moldura para Celular"
-              >
-                <Palette className="h-3.5 w-3.5 text-sky-600" />
-                <span>Aparência</span>
-              </button>
-            )}
-
-            <button
-              onClick={onRefresh}
-              disabled={isLoading}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 rounded-xl text-xs font-bold border border-slate-200 transition shadow-2xs"
-              title="Sincronizar com Google Contatos e Agenda"
+        {/* Row 2: Direct External Apps & Health Systems Links + Status Pill */}
+        <div className="flex flex-col md:flex-row items-center justify-between py-2 gap-2 border-b border-slate-100">
+          {/* Direct External Apps & Health Systems Quick Links */}
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full py-0.5 w-full md:w-auto">
+            <a
+              href="https://contacts.google.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-blue-50/80 text-slate-700 hover:text-blue-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-blue-300 transition shadow-2xs group shrink-0"
+              title="Abrir Google Contatos diretamente em uma nova aba ou aplicativo do celular"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-600' : ''}`} />
-              Sincronizar
-            </button>
+              <GoogleContactsIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+              <span className="hidden lg:inline">Google Contatos</span>
+              <span className="lg:hidden">Contatos</span>
+              <ExternalLink className="h-3 w-3 text-blue-500 opacity-80 group-hover:opacity-100" />
+            </a>
+
+            <a
+              href="https://calendar.google.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-blue-50/80 text-slate-700 hover:text-blue-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-blue-300 transition shadow-2xs group shrink-0"
+              title="Abrir Google Agenda diretamente em uma nova aba ou aplicativo do celular"
+            >
+              <GoogleCalendarIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+              <span className="hidden lg:inline">Google Agenda</span>
+              <span className="lg:hidden">Agenda</span>
+              <ExternalLink className="h-3 w-3 text-blue-500 opacity-80 group-hover:opacity-100" />
+            </a>
+
+            <a
+              href="https://sissamb.osasco.sp.gov.br/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-emerald-50/80 text-slate-700 hover:text-emerald-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-emerald-300 transition shadow-2xs group shrink-0"
+              title="Abrir SISSAMB Saúde Osasco diretamente em uma nova aba ou aplicativo"
+            >
+              <SissambIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+              <span className="hidden lg:inline">SISSAMB Osasco</span>
+              <span className="lg:hidden">SISSAMB</span>
+              <ExternalLink className="h-3 w-3 text-emerald-600 opacity-80 group-hover:opacity-100" />
+            </a>
+
+            <a
+              href="https://cadastro.saude.gov.br/segcartao/?contextType=external&username=string&contextValue=%2Foam&password=sercure_string&challenge_url=https%3A%2F%2Fcadastro.saude.gov.br%2Fsegcartao&request_id=8285361639685691817&authn_try_count=0&locale=pt_BR&resource_url=http%253A%252F%252Fcadastro.saude.gov.br%252Fnovocartao%252Frestrito%252FusuarioConsulta.jsp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-sky-50/80 text-slate-700 hover:text-sky-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-sky-300 transition shadow-2xs group shrink-0"
+              title="Abrir CADSUS / Cartão Nacional de Saúde (Ministério da Saúde)"
+            >
+              <CadSusIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+              <span className="hidden lg:inline">Cartão SUS (CADSUS)</span>
+              <span className="lg:hidden">CADSUS</span>
+              <ExternalLink className="h-3 w-3 text-sky-600 opacity-80 group-hover:opacity-100" />
+            </a>
+
+            <a
+              href="https://laudos.cientificalab.com.br/laudos/sair/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-cyan-50/80 text-slate-700 hover:text-cyan-900 rounded-xl text-xs font-bold border border-slate-200 hover:border-cyan-300 transition shadow-2xs group shrink-0"
+              title="Abrir Sistema de Laudos CientíficaLab"
+            >
+              <CientificaLabIcon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+              <span className="hidden lg:inline">Laudos CientíficaLab</span>
+              <span className="lg:hidden">CientíficaLab</span>
+              <ExternalLink className="h-3 w-3 text-cyan-600 opacity-80 group-hover:opacity-100" />
+            </a>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100/90 border border-slate-200 text-xs shrink-0">
+            <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Modo Off-line Ativo
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="flex items-center gap-1 text-teal-800 font-bold">
+              <Home className="h-3.5 w-3.5 text-teal-600" /> Domicílios ({domicileCount})
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="flex items-center gap-1 text-emerald-800 font-bold">
+              <Users className="h-3.5 w-3.5 text-emerald-600" /> Munícipes ({patientCount})
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="flex items-center gap-1 text-amber-800 font-bold">
+              <MapPin className="h-3.5 w-3.5 text-amber-600" /> Maps
+            </span>
           </div>
         </div>
 

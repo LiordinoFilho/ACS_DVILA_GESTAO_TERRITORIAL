@@ -4,14 +4,12 @@ import { ShieldCheck, Calendar, Users, MapPin, Sparkles, ShieldAlert, HeartPulse
 interface LoginScreenProps {
   onLoginGoogle: () => void;
   onContinueDemo: () => void;
-  onOpenDiagnostic: () => void;
   isLoading?: boolean;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLoginGoogle,
   onContinueDemo,
-  onOpenDiagnostic,
   isLoading = false,
 }) => {
   return (
@@ -22,8 +20,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       {/* Top Header Bar */}
       <header className="relative z-10 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex items-center justify-between border-b border-slate-800/80">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-gradient-to-tr from-emerald-600 to-teal-500 text-slate-950 rounded-2xl shadow-lg shadow-emerald-500/20 font-bold flex items-center justify-center">
-            <HeartPulse className="h-6 w-6 text-slate-950" />
+          <div className="h-11 w-11 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 p-0.5 shadow-lg shadow-emerald-500/20 shrink-0 overflow-hidden">
+            <img src="/pwa-icon.jpg" alt="ACS D'Vila Logo" className="h-full w-full object-cover rounded-[14px]" />
           </div>
           <div>
             <h1 className="text-base font-extrabold tracking-tight text-white flex items-center gap-2">
