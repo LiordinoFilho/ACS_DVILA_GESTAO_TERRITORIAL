@@ -1,4 +1,5 @@
 import { Domicile, GoogleContact, CalendarEvent } from '../types';
+import { getBrasiliaDateStr } from '../utils/dateUtils';
 
 export interface ACSBackupData {
   version: string;
@@ -88,7 +89,7 @@ export function downloadBackupFile(backup: ACSBackupData): void {
   const blob = new Blob([jsonContent], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = getBrasiliaDateStr();
   const filename = `ACS_DVila_Backup_${dateStr}.acsbackup`;
 
   const link = document.createElement('a');

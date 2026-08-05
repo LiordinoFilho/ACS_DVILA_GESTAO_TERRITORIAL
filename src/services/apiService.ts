@@ -25,6 +25,8 @@ export interface GeocodeResult {
   displayName: string;
 }
 
+const cepRamCache = new Map<string, ViaCepResult>();
+
 /**
  * Busca endereço gratuito por CEP brasileiro com múltiplos provedores resilientes (ViaCEP, BrasilAPI, AwesomeAPI)
  * @param cep String contendo o CEP (ex: 01001-000 ou 01001000)
@@ -34,6 +36,29 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
   if (cleanCep.length !== 8) {
     return null;
   }
+
+  // Check RAM Cache
+  if (cepRamCache.has(cleanCep)) {
+    return cepRamCache.get(cleanCep)!;
+  }
+
+  // Check LocalStorage Cache
+  try {
+    const cachedStr = localStorage.getItem(`acs_cep_${cleanCep}`);
+    if (cachedStr) {
+      const parsed = JSON.parse(cachedStr);
+      cepRamCache.set(cleanCep, parsed);
+      return parsed;
+    }
+  } catch (e) {}
+
+  const saveToCache = (result: ViaCepResult) => {
+    cepRamCache.set(cleanCep, result);
+    try {
+      localStorage.setItem(`acs_cep_${cleanCep}`, JSON.stringify(result));
+    } catch (e) {}
+    return result;
+  };
 
   // Helper fetch com timeout para resiliência rápida de rede
   const fetchWithTimeout = async (url: string, timeoutMs = 3500) => {
@@ -50,11 +75,30 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
     }
   };
 
-  // 1. Provedor Primário: ViaCEP
+  // 0. Provedor Backend do Servidor ACS (Express backend API)
+  try {
+    const backendRes = await fetchWithTimeout(`/api/viacep/${cleanCep}`);
+    if (backendRes && backendRes.success && backendRes.data) {
+      const d = backendRes.data;
+      return saveToCache({
+        cep: d.cep || cleanCep,
+        logradouro: d.logradouro || '',
+        complemento: d.complemento || '',
+        bairro: d.bairro || '',
+        localidade: d.localidade || '',
+        uf: d.uf || '',
+        ibge: d.ibge || ''
+      });
+    }
+  } catch {
+    console.warn('Backend ViaCEP endpoint indisponível, tentando provedores diretos...');
+  }
+
+  // 1. Provedor Primário: ViaCEP Direto
   try {
     const data = await fetchWithTimeout(`https://viacep.com.br/ws/${cleanCep}/json/`);
     if (data && !data.erro && (data.cep || data.logradouro || data.localidade)) {
-      return {
+      return saveToCache({
         cep: data.cep || cleanCep,
         logradouro: data.logradouro || '',
         complemento: data.complemento || '',
@@ -63,7 +107,7 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
         uf: data.uf || '',
         ibge: data.ibge || '',
         ddd: data.ddd || '',
-      };
+      });
     }
   } catch {
     console.warn('ViaCEP indisponível no momento, tentando BrasilAPI...');
@@ -73,7 +117,7 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
   try {
     const data = await fetchWithTimeout(`https://brasilapi.com.br/api/cep/v1/${cleanCep}`);
     if (data && (data.cep || data.street || data.city)) {
-      return {
+      return saveToCache({
         cep: data.cep || cleanCep,
         logradouro: data.street || '',
         complemento: '',
@@ -81,7 +125,7 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
         localidade: data.city || '',
         uf: data.state || '',
         ibge: '',
-      };
+      });
     }
   } catch {
     console.warn('BrasilAPI indisponível no momento, tentando AwesomeAPI...');
@@ -91,7 +135,7 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
   try {
     const data = await fetchWithTimeout(`https://cep.awesomeapi.com.br/json/${cleanCep}`);
     if (data && (data.cep || data.address || data.city)) {
-      return {
+      return saveToCache({
         cep: data.cep || cleanCep,
         logradouro: data.address || '',
         complemento: '',
@@ -99,7 +143,7 @@ export async function searchAddressByCEP(cep: string): Promise<ViaCepResult | nu
         localidade: data.city || '',
         uf: data.state || '',
         ibge: data.city_ibge || '',
-      };
+      });
     }
   } catch {
     console.warn('Provedor de CEP secundário indisponível.');
