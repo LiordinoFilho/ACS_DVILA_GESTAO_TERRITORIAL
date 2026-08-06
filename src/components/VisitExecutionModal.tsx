@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getBrasiliaDateStr } from '../utils/dateUtils';
 import { CalendarEvent, GoogleContact, Domicile, DomicileMember, VisitStatus, FamilyRelationship, PatientHealthProfile, DEFAULT_MICROAREA, MICROAREAS, getSavedMicroareas, cleanMicroareaName } from '../types';
+import { searchAddressByCEP } from '../services/apiService';
 import {
   FileText,
   User,
@@ -28,7 +29,9 @@ import {
   X,
   MapPinOff,
   Building2,
-  Cross
+  Cross,
+  Search,
+  Loader2
 } from 'lucide-react';
 
 interface VisitExecutionModalProps {
@@ -198,6 +201,8 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
   const [hpNotes, setHpNotes] = useState('');
 
   // Domicile Edit Form State
+  const [domZipCode, setDomZipCode] = useState('');
+  const [isSearchingDomCep, setIsSearchingDomCep] = useState(false);
   const [domStreet, setDomStreet] = useState('');
   const [domNumber, setDomNumber] = useState('');
   const [domComplement, setDomComplement] = useState('');
@@ -215,7 +220,22 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
 
   // Add Morador inside Domicile Modal
   const [newMemberPatientId, setNewMemberPatientId] = useState('');
+  const [newMemberSearch, setNewMemberSearch] = useState('');
   const [newMemberRel, setNewMemberRel] = useState<FamilyRelationship>('Filho(a)');
+
+  const handleDomCepSearch = async () => {
+    if (!domZipCode) return;
+    setIsSearchingDomCep(true);
+    const res = await searchAddressByCEP(domZipCode);
+    setIsSearchingDomCep(false);
+
+    if (res) {
+      if (res.logradouro) setDomStreet(res.logradouro);
+      if (res.bairro) setDomNeighborhood(res.bairro);
+    } else {
+      alert('CEP não encontrado ou formato inválido. Verifique e tente novamente.');
+    }
+  };
 
   // Helper to sync status notes into visit observation report
   const updateObservationWithMemberStatuses = (newMap: Record<string, 'obito' | 'mudou_se_territorio' | 'mudou_se_municipio' | null>) => {
@@ -473,6 +493,7 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
         : []
     };
 
+    setDomZipCode(dom.zipCode || '');
     setDomStreet(dom.street || '');
     setDomNumber(dom.number || '');
     setDomComplement(dom.complement || '');
@@ -487,6 +508,8 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
     setDomPets(dom.hasPets ?? false);
     setDomPetsDetail(dom.petsDetail || '');
     setDomMembers(dom.familyMembers || []);
+    setNewMemberPatientId('');
+    setNewMemberSearch('');
 
     setActiveSubModal('edit_domicile');
   };
@@ -514,6 +537,7 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
 
     setDomMembers([...domMembers, newMember]);
     setNewMemberPatientId('');
+    setNewMemberSearch('');
   };
 
   // Remove Morador
@@ -532,6 +556,7 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
       number: domNumber,
       complement: domComplement,
       neighborhood: domNeighborhood,
+      zipCode: domZipCode || undefined,
       city: scheduledDomicile?.city || 'São Paulo',
       state: scheduledDomicile?.state || 'SP',
       microarea: domMicroarea,
@@ -1300,6 +1325,43 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
                     1. Endereço e Localização do Domicílio
                   </h4>
 
+                  {/* CEP Lookup Box with ViaCEP API */}
+                  <div className="bg-emerald-50/80 p-3 rounded-2xl border border-emerald-200 mb-2">
+                    <label className="block text-xs font-bold text-emerald-950 mb-1 flex items-center justify-between">
+                      <span>CEP (Preenchimento Automático via API ViaCEP)</span>
+                      <span className="text-[10px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-mono">
+                        ViaCEP API
+                      </span>
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Ex: 01310-100"
+                        value={domZipCode}
+                        onChange={(e) => setDomZipCode(e.target.value)}
+                        className="flex-1 text-xs p-2.5 bg-white border border-emerald-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-slate-900 font-bold"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDomCepSearch}
+                        disabled={isSearchingDomCep}
+                        className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50 shrink-0 cursor-pointer"
+                      >
+                        {isSearchingDomCep ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Buscando CEP...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Search className="h-3.5 w-3.5" />
+                            <span>Buscar CEP</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-bold text-slate-700 mb-1">Rua / Logradouro *</label>
@@ -1371,41 +1433,100 @@ export const VisitExecutionModal: React.FC<VisitExecutionModalProps> = ({
                     <span className="text-[11px] font-bold text-purple-700">{domMembers.length} morador(es)</span>
                   </h4>
 
-                  {/* Add New Resident Dropdown */}
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-white p-2.5 rounded-xl border border-purple-200">
-                    <select
-                      value={newMemberPatientId}
-                      onChange={(e) => setNewMemberPatientId(e.target.value)}
-                      className="flex-1 text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium"
-                    >
-                      <option value="">Selecione um munícipe para incluir no domicílio...</option>
-                      {contacts.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} {c.cns ? `(CNS: ${c.cns})` : ''}
-                        </option>
-                      ))}
-                    </select>
+                  {/* Add New Resident Search & Selection */}
+                  <div className="space-y-2 bg-white p-3 rounded-xl border border-purple-200">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Buscar Paciente no Google Contatos para Incluir nesta Família:
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="flex-1 relative">
+                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                        <input
+                          type="text"
+                          placeholder="Digite o nome ou CNS do morador para buscar..."
+                          value={newMemberSearch}
+                          onChange={(e) => {
+                            setNewMemberSearch(e.target.value);
+                            if (newMemberPatientId) setNewMemberPatientId('');
+                          }}
+                          className="w-full text-xs pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium"
+                        />
+                      </div>
 
-                    <select
-                      value={newMemberRel}
-                      onChange={(e) => setNewMemberRel(e.target.value as FamilyRelationship)}
-                      className="text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium"
-                    >
-                      {RELATIONSHIP_OPTIONS.map((r) => (
-                        <option key={r} value={r}>
-                          {r}
-                        </option>
-                      ))}
-                    </select>
+                      <select
+                        value={newMemberRel}
+                        onChange={(e) => setNewMemberRel(e.target.value as FamilyRelationship)}
+                        className="text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold shrink-0"
+                      >
+                        {RELATIONSHIP_OPTIONS.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={handleAddMemberToDomicile}
-                      className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg transition shrink-0 flex items-center justify-center gap-1"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Incluir Morador
-                    </button>
+                    {newMemberPatientId ? (
+                      <div className="flex items-center justify-between p-2.5 bg-purple-50 border border-purple-200 rounded-lg text-xs font-bold text-purple-900">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CheckCircle2 className="h-4 w-4 text-purple-600 shrink-0" />
+                          <span className="truncate">
+                            {contacts.find((c) => c.id === newMemberPatientId)?.name}
+                            {contacts.find((c) => c.id === newMemberPatientId)?.cns ? ` (CNS: ${contacts.find((c) => c.id === newMemberPatientId)?.cns})` : ''}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddMemberToDomicile}
+                          className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-xs font-bold transition flex items-center gap-1 shadow-xs shrink-0 cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Adicionar Morador
+                        </button>
+                      </div>
+                    ) : (
+                      newMemberSearch.trim() !== '' && (
+                        <div className="max-h-44 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100 bg-white shadow-inner">
+                          {contacts
+                            .filter(
+                              (c) =>
+                                c.name.toLowerCase().includes(newMemberSearch.toLowerCase()) ||
+                                (c.cns && c.cns.includes(newMemberSearch))
+                            )
+                            .slice(0, 10)
+                            .map((c) => (
+                              <button
+                                type="button"
+                                key={c.id}
+                                onClick={() => {
+                                  setNewMemberPatientId(c.id);
+                                  setNewMemberSearch(c.name);
+                                }}
+                                className="w-full text-left p-2 hover:bg-purple-50 transition flex items-center justify-between gap-2 text-xs cursor-pointer"
+                              >
+                                <div className="min-w-0">
+                                  <span className="font-bold text-slate-800 block truncate">{c.name}</span>
+                                  <span className="text-[10px] text-slate-500">
+                                    {c.cns ? `CNS: ${c.cns}` : 'Sem CNS'} • {c.microarea || 'Sem Microárea'}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full shrink-0">
+                                  Selecionar
+                                </span>
+                              </button>
+                            ))}
+                          {contacts.filter(
+                            (c) =>
+                              c.name.toLowerCase().includes(newMemberSearch.toLowerCase()) ||
+                              (c.cns && c.cns.includes(newMemberSearch))
+                          ).length === 0 && (
+                            <div className="p-2.5 text-center text-xs text-slate-400 italic">
+                              Nenhum morador encontrado com "{newMemberSearch}".
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
                   </div>
 
                   {/* Moradores Table/List */}

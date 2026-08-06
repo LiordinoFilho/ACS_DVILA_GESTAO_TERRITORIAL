@@ -42,7 +42,8 @@ import {
   Dog,
   ExternalLink,
   Loader2,
-  Layers
+  Layers,
+  Edit3
 } from 'lucide-react';
 
 interface DomicileManagerProps {
@@ -91,8 +92,9 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
   const [isAddressGroupModalOpen, setIsAddressGroupModalOpen] = useState(false);
   const [isSetMicroareaModalOpen, setIsSetMicroareaModalOpen] = useState(false);
 
-  // Modal State: Create Domicile
+  // Modal State: Create/Edit Domicile
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingDomicileId, setEditingDomicileId] = useState<string | null>(null);
   const [street, setStreet] = useState('');
   const [number, setNumber] = useState('');
   const [complement, setComplement] = useState('');
@@ -170,7 +172,42 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
     return true;
   });
 
-  // Handle Form Submit: Create Domicile
+  const handleOpenEditModal = (dom: Domicile) => {
+    setEditingDomicileId(dom.id);
+    setStreet(dom.street || '');
+    setNumber(dom.number || '');
+    setComplement(dom.complement || '');
+    setNeighborhood(dom.neighborhood || 'Bela Vista');
+    setZipCode(dom.zipCode || '');
+    setCity(dom.city || 'São Paulo');
+    setState(dom.state || 'SP');
+    setMicroarea(dom.microarea || DEFAULT_MICROAREA);
+    setResidenceType(dom.residenceType || 'Casa');
+    setOwnership(dom.ownership || 'Próprio');
+    setWaterSupply(dom.waterSupply || 'Rede Encanada');
+    setSanitation(dom.sanitation || 'Rede Pública');
+    setGarbageCollection(dom.garbageCollection || 'Coletado');
+    setHasElectricity(dom.hasElectricity ?? true);
+    setHasPets(dom.hasPets ?? false);
+    setPetsDetail(dom.petsDetail || '');
+    setRoomsCount(dom.roomsCount ?? '');
+    setResidesSince(dom.residesSince || '');
+    setFamilyIncome(dom.familyIncome || '1 salário');
+    setMembersCount(dom.membersCount ?? '');
+    setNotes(dom.notes || '');
+    setIsCreateModalOpen(true);
+  };
+
+  const handleCloseCreateModal = () => {
+    setIsCreateModalOpen(false);
+    setEditingDomicileId(null);
+    setStreet('');
+    setNumber('');
+    setComplement('');
+    setNotes('');
+  };
+
+  // Handle Form Submit: Create or Edit Domicile
   const handleCreateDomicileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!street || !number) return;
@@ -185,41 +222,67 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
       }
     }
 
-    const newDom: Domicile = {
-      id: `dom_${Date.now()}`,
-      street,
-      number,
-      complement,
-      neighborhood,
-      zipCode,
-      city,
-      state,
-      microarea: cleanMa,
-      residenceType,
-      ownership,
-      waterSupply,
-      sanitation,
-      garbageCollection,
-      hasElectricity,
-      hasPets,
-      petsDetail,
-      roomsCount: typeof roomsCount === 'number' ? roomsCount : undefined,
-      residesSince: residesSince || undefined,
-      familyIncome: familyIncome || '1 salário',
-      membersCount: typeof membersCount === 'number' ? membersCount : undefined,
-      notes,
-      familyMembers: [],
-      createdAt: getBrasiliaDateStr()
-    };
-
-    onAddDomicile(newDom);
+    if (editingDomicileId) {
+      const existingDom = domiciles.find((d) => d.id === editingDomicileId);
+      const updatedDom: Domicile = {
+        ...existingDom,
+        id: editingDomicileId,
+        street,
+        number,
+        complement,
+        neighborhood,
+        zipCode,
+        city,
+        state,
+        microarea: cleanMa,
+        residenceType,
+        ownership,
+        waterSupply,
+        sanitation,
+        garbageCollection,
+        hasElectricity,
+        hasPets,
+        petsDetail,
+        roomsCount: typeof roomsCount === 'number' ? roomsCount : undefined,
+        residesSince: residesSince || undefined,
+        familyIncome: familyIncome || '1 salário',
+        membersCount: typeof membersCount === 'number' ? membersCount : undefined,
+        notes,
+        familyMembers: existingDom?.familyMembers || []
+      };
+      onUpdateDomicile(updatedDom);
+    } else {
+      const newDom: Domicile = {
+        id: `dom_${Date.now()}`,
+        street,
+        number,
+        complement,
+        neighborhood,
+        zipCode,
+        city,
+        state,
+        microarea: cleanMa,
+        residenceType,
+        ownership,
+        waterSupply,
+        sanitation,
+        garbageCollection,
+        hasElectricity,
+        hasPets,
+        petsDetail,
+        roomsCount: typeof roomsCount === 'number' ? roomsCount : undefined,
+        residesSince: residesSince || undefined,
+        familyIncome: familyIncome || '1 salário',
+        membersCount: typeof membersCount === 'number' ? membersCount : undefined,
+        notes,
+        familyMembers: [],
+        createdAt: getBrasiliaDateStr()
+      };
+      onAddDomicile(newDom);
+    }
 
     // Reset Form
-    setIsCreateModalOpen(false);
-    setStreet('');
-    setNumber('');
-    setComplement('');
-    setNotes('');
+    handleCloseCreateModal();
   };
 
   // Handle Link Patient to Domicile (Composição Familiar)
@@ -671,14 +734,22 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
                     </div>
 
                     {/* Actions Footer */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           onClick={() => onScheduleVisitForDomicile(dom)}
-                          className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
                         >
                           <Calendar className="h-3.5 w-3.5" />
                           Agendar Visita no Google Agenda
+                        </button>
+
+                        <button
+                          onClick={() => handleOpenEditModal(dom)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer"
+                        >
+                          <Edit3 className="h-3.5 w-3.5 text-slate-600" />
+                          Editar Cadastro
                         </button>
 
                         <a
@@ -709,18 +780,18 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
         </div>
       )}
 
-      {/* Modal: Create Domicile */}
+      {/* Modal: Create/Edit Domicile */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150 max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-3">
+          <div className="bg-white rounded-2xl max-w-xl w-[95vw] p-4 sm:p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-150 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
-              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                <Home className="h-5 w-5 text-teal-600" />
-                Novo Cadastro Domiciliar
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Home className="h-5 w-5 text-teal-600 shrink-0" />
+                {editingDomicileId ? 'Editar Cadastro Domiciliar' : 'Novo Cadastro Domiciliar'}
               </h3>
               <button
-                onClick={() => setIsCreateModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1"
+                onClick={handleCloseCreateModal}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
               >
                 ✕
               </button>
@@ -1007,37 +1078,84 @@ export const DomicileManager: React.FC<DomicileManagerProps> = ({
             </div>
 
             <form onSubmit={handleAddMemberToDomicile} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700">
                   Buscar Paciente Cadastrado (Google Contatos) *
                 </label>
 
-                <input
-                  type="text"
-                  placeholder="Digitar nome para filtrar..."
-                  value={memberSearch}
-                  onChange={(e) => setMemberSearch(e.target.value)}
-                  className="w-full text-xs p-2 mb-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                />
+                <div className="relative">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Digite o nome ou CNS do paciente para buscar..."
+                    value={memberSearch}
+                    onChange={(e) => {
+                      setMemberSearch(e.target.value);
+                      if (selectedPatientId) setSelectedPatientId('');
+                    }}
+                    className="w-full text-xs pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800 font-medium"
+                  />
+                </div>
 
-                <select
-                  required
-                  value={selectedPatientId}
-                  onChange={(e) => setSelectedPatientId(e.target.value)}
-                  className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 text-slate-800 font-medium"
-                >
-                  <option value="">Selecione um paciente cadastrado...</option>
-                  {contacts
-                    .filter((c) =>
+                {selectedPatientId ? (
+                  <div className="flex items-center justify-between p-2.5 bg-teal-50 border border-teal-200 rounded-xl text-xs font-bold text-teal-900">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <CheckCircle2 className="h-4 w-4 text-teal-600 shrink-0" />
+                      <span className="truncate">
+                        {contacts.find((c) => c.id === selectedPatientId)?.name}
+                        {contacts.find((c) => c.id === selectedPatientId)?.cns ? ` (CNS: ${contacts.find((c) => c.id === selectedPatientId)?.cns})` : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPatientId('');
+                        setMemberSearch('');
+                      }}
+                      className="text-xs text-rose-600 hover:underline font-bold px-2 py-0.5 shrink-0 cursor-pointer"
+                    >
+                      Trocar
+                    </button>
+                  </div>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-white shadow-inner">
+                    {contacts
+                      .filter((c) =>
+                        c.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
+                        (c.cns && c.cns.includes(memberSearch))
+                      )
+                      .slice(0, 15)
+                      .map((c) => (
+                        <button
+                          type="button"
+                          key={c.id}
+                          onClick={() => {
+                            setSelectedPatientId(c.id);
+                            setMemberSearch(c.name);
+                          }}
+                          className="w-full text-left p-2.5 hover:bg-teal-50 transition flex items-center justify-between gap-2 text-xs cursor-pointer"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-800 block truncate">{c.name}</span>
+                            <span className="text-[10px] text-slate-500">
+                              {c.cns ? `CNS: ${c.cns}` : 'Sem CNS'} • {c.microarea || 'Sem Microárea'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold text-teal-700 bg-teal-100 px-2 py-0.5 rounded-full shrink-0">
+                            Selecionar
+                          </span>
+                        </button>
+                      ))}
+                    {contacts.filter((c) =>
                       c.name.toLowerCase().includes(memberSearch.toLowerCase()) ||
                       (c.cns && c.cns.includes(memberSearch))
-                    )
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.cns ? `(CNS: ${c.cns})` : ''} - {c.microarea || 'Sem Microárea'}
-                      </option>
-                    ))}
-                </select>
+                    ).length === 0 && (
+                      <div className="p-3 text-center text-xs text-slate-400 italic">
+                        Nenhum paciente encontrado com "{memberSearch}".
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>

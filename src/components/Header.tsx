@@ -149,34 +149,35 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Row 1: Top bar with Branding & App Controls */}
         <div className="flex flex-col xl:flex-row xl:items-center justify-between py-2.5 gap-3 border-b border-slate-100">
-          <div className="flex items-center gap-3 justify-between xl:justify-start shrink-0">
-            <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 justify-between xl:justify-start w-full xl:w-auto min-w-0">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
               <ACSAppLogo />
-              <div className="shrink-0">
-                <div className="flex items-center gap-2 whitespace-nowrap">
-                  <h1 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight leading-none whitespace-nowrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight leading-none truncate">
                     ACS D'Vila
                   </h1>
-                  <span className="text-xs bg-emerald-50 text-emerald-700 font-bold px-2.5 py-0.5 rounded-full border border-emerald-200/80 whitespace-nowrap shrink-0 inline-flex items-center">
+                  <span className="text-[10px] sm:text-xs bg-emerald-50 text-emerald-700 font-bold px-2 sm:px-2.5 py-0.5 rounded-full border border-emerald-200/80 shrink-0 inline-flex items-center">
                     Território & Saúde
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-1 whitespace-nowrap">
-                  <span className="text-emerald-700 font-bold whitespace-nowrap">Agente Comunitário de Saúde</span>
-                  <span className="text-slate-300">•</span>
-                  <span className="text-slate-500 whitespace-nowrap">Google Contatos / Agenda / Maps</span>
+                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5 truncate">
+                  <span className="text-emerald-700 font-bold truncate">Agente Comunitário de Saúde</span>
+                  <span className="text-slate-300 hidden sm:inline">•</span>
+                  <span className="text-slate-500 truncate hidden sm:inline">Google Contatos / Agenda / Maps</span>
                 </p>
               </div>
             </div>
 
-            {/* Mobile sync button */}
+            {/* Mobile / Tablet sync button */}
             <button
               onClick={onRefresh}
               disabled={isLoading}
-              className="xl:hidden p-2 rounded-lg bg-slate-100 text-slate-700 hover:text-slate-900 transition border border-slate-200 shrink-0"
-              title="Sincronizar"
+              className="lg:hidden flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white rounded-xl text-xs font-bold border border-slate-700 transition shadow-2xs shrink-0 cursor-pointer"
+              title="Sincronizar com Google Contatos e Agenda"
             >
-              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin text-emerald-600' : ''}`} />
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-emerald-400' : 'text-slate-300'}`} />
+              <span className="text-xs font-bold">Sincronizar</span>
             </button>
           </div>
 

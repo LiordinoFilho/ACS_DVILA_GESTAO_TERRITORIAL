@@ -66,6 +66,10 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     return { user: result.user, accessToken: accessToken || '' };
   } catch (error: any) {
+    if (error?.code === 'auth/popup-closed-by-user' || error?.message?.includes('popup-closed-by-user') || error?.code === 'auth/cancelled-popup-request') {
+      console.info('Pop-up de login foi fechado pelo usuário.');
+      return null;
+    }
     console.error('Firebase login error:', error?.message || error);
     throw error;
   } finally {

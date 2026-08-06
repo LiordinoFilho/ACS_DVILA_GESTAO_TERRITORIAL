@@ -100,20 +100,28 @@ export async function saveAllAppData(
   };
 
   const performDiskSave = () => {
-    try {
-      localStorage.setItem('acs_domiciles', JSON.stringify(domiciles));
-      localStorage.setItem('acs_patients', JSON.stringify(contacts));
-      localStorage.setItem('acs_visits', JSON.stringify(events));
-      localStorage.setItem('acs_trash_items', JSON.stringify(trashItems));
-      localStorage.setItem('acs_cache_last_saved', timestamp);
-    } catch (e) {
-      console.warn('LocalStorage quota warning:', e);
-    }
+    const runSave = () => {
+      try {
+        localStorage.setItem('acs_domiciles', JSON.stringify(domiciles));
+        localStorage.setItem('acs_patients', JSON.stringify(contacts));
+        localStorage.setItem('acs_visits', JSON.stringify(events));
+        localStorage.setItem('acs_trash_items', JSON.stringify(trashItems));
+        localStorage.setItem('acs_cache_last_saved', timestamp);
+      } catch (e) {
+        console.warn('LocalStorage quota warning:', e);
+      }
 
-    saveToIndexedDB('domiciles', domiciles);
-    saveToIndexedDB('contacts', contacts);
-    saveToIndexedDB('events', events);
-    saveToIndexedDB('trashItems', trashItems);
+      saveToIndexedDB('domiciles', domiciles);
+      saveToIndexedDB('contacts', contacts);
+      saveToIndexedDB('events', events);
+      saveToIndexedDB('trashItems', trashItems);
+    };
+
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      (window as any).requestIdleCallback(runSave, { timeout: 2000 });
+    } else {
+      setTimeout(runSave, 0);
+    }
   };
 
   const performServerSave = () => {
@@ -166,13 +174,13 @@ export async function saveAllAppData(
     performDriveSave();
   } else {
     if (diskSaveTimeout) clearTimeout(diskSaveTimeout);
-    diskSaveTimeout = setTimeout(performDiskSave, 1000);
+    diskSaveTimeout = setTimeout(performDiskSave, 800);
 
     if (serverSaveTimeout) clearTimeout(serverSaveTimeout);
-    serverSaveTimeout = setTimeout(performServerSave, 5000);
+    serverSaveTimeout = setTimeout(performServerSave, 8000);
 
     if (driveSaveTimeout) clearTimeout(driveSaveTimeout);
-    driveSaveTimeout = setTimeout(performDriveSave, 10000);
+    driveSaveTimeout = setTimeout(performDriveSave, 15000);
   }
 }
 
