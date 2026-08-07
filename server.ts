@@ -1623,6 +1623,15 @@ Elabore um resumo estratégico curto para o dia (3 parágrafos ou seções curta
   }
 });
 
+// Fallback para rotas de API não encontradas (Evita erro 500 no Vercel quando a rota não casa)
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Rota de API não encontrada no servidor.',
+    url: req.originalUrl || req.url
+  });
+});
+
 // START EXPRESS & VITE MIDDLEWARE
 async function startServer() {
   if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
