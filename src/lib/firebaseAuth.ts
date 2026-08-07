@@ -30,7 +30,7 @@ provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 provider.addScope('https://www.googleapis.com/auth/userinfo.email');
 provider.addScope('https://www.googleapis.com/auth/userinfo.profile');
-provider.setCustomParameters({ prompt: 'select_account' });
+provider.setCustomParameters({ prompt: 'consent select_account' });
 
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
