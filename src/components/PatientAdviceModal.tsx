@@ -47,7 +47,18 @@ export const PatientAdviceModal: React.FC<PatientAdviceModalProps> = ({
         })
       });
 
-      const body = await res.json();
+      const resText = await res.text();
+      let body: any = {};
+      try {
+        body = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(
+          res.ok
+            ? 'Resposta em formato inválido do servidor.'
+            : 'O servidor do Agente Aguiar IA está temporariamente indisponível.'
+        );
+      }
+
       if (body.success && body.data) {
         setAdviceData(body.data);
       } else {

@@ -1451,14 +1451,27 @@ DIRETRIZES FUNDAMENTAIS:
       parts: [{ text: contextSnippet + message }]
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: formattedContents,
-      config: {
-        systemInstruction,
-        temperature: 0.7
-      }
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: formattedContents,
+        config: {
+          systemInstruction,
+          temperature: 0.7
+        }
+      });
+    } catch (modelErr: any) {
+      console.warn('Fallback para gemini-2.0-flash:', modelErr?.message);
+      response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: formattedContents,
+        config: {
+          systemInstruction,
+          temperature: 0.7
+        }
+      });
+    }
 
     return res.json({
       success: true,
@@ -1497,15 +1510,28 @@ REGRAS:
 
 Gere o plano de abordagem da visita.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        temperature: 0.5
-      }
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          temperature: 0.5
+        }
+      });
+    } catch (e: any) {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+          responseMimeType: 'application/json',
+          temperature: 0.5
+        }
+      });
+    }
 
     let resultJson = { adviceList: [], summary: '' };
     try {
@@ -1553,14 +1579,26 @@ Dados da Microárea do ACS:
 
 Elabore um resumo estratégico curto para o dia (3 parágrafos ou seções curtas).`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.7
-      }
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.7
+        }
+      });
+    } catch (e: any) {
+      response = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+          systemInstruction,
+          temperature: 0.7
+        }
+      });
+    }
 
     return res.json({
       success: true,

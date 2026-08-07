@@ -83,7 +83,18 @@ export const GeminiAssistantModal: React.FC<GeminiAssistantModalProps> = ({
         })
       });
 
-      const data = await response.json();
+      const resText = await response.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(
+          response.ok
+            ? 'Resposta em formato inválido do servidor.'
+            : 'O servidor do Agente Aguiar IA está indisponível ou configurando a chave do Gemini no momento.'
+        );
+      }
+
       if (data.success && data.reply) {
         const modelMsg: Message = {
           id: `model-${Date.now()}`,
