@@ -4,7 +4,6 @@ import fs from 'fs';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import { google } from 'googleapis';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 
 const app = express();
@@ -123,7 +122,7 @@ function getAuthenticatedClient(req: express.Request) {
   if (!tokenData || (!tokenData.access_token && !tokenData.id_token)) return null;
 
   try {
-    const oAuth2Client = new google.auth.OAuth2();
+    const oAuth2Client = createOAuthClient(`${getAppUrl(req)}/api/auth/callback`);
     oAuth2Client.setCredentials(tokenData);
     return oAuth2Client;
   } catch (err) {
@@ -1214,12 +1213,18 @@ app.get('/api/viacep/:cep', async (req, res) => {
 });
 
 // SERVER CACHE BACKUP ENDPOINTS (Triple-layer storage resilience)
-const CACHE_FILE_PATH = path.join(process.cwd(), 'data-cache.json');
+const getCacheFilePath = () => {
+  if (process.env.VERCEL) {
+    return path.join('/tmp', 'data-cache.json');
+  }
+  return path.join(process.cwd(), 'data-cache.json');
+};
 
 app.get('/api/cache/backup', (req, res) => {
   try {
-    if (fs.existsSync(CACHE_FILE_PATH)) {
-      const raw = fs.readFileSync(CACHE_FILE_PATH, 'utf-8');
+    const cachePath = getCacheFilePath();
+    if (fs.existsSync(cachePath)) {
+      const raw = fs.readFileSync(cachePath, 'utf-8');
       const data = JSON.parse(raw);
       return res.json({ success: true, data });
     }
@@ -1232,21 +1237,26 @@ app.get('/api/cache/backup', (req, res) => {
 app.post('/api/cache/backup', (req, res) => {
   try {
     const body = req.body;
-    fs.writeFileSync(
-      CACHE_FILE_PATH,
-      JSON.stringify(
-        {
-          ...body,
-          updatedAt: new Date().toISOString()
-        },
-        null,
-        2
-      )
+    const content = JSON.stringify(
+      {
+        ...body,
+        updatedAt: new Date().toISOString()
+      },
+      null,
+      2
     );
+
+    let cachePath = getCacheFilePath();
+    try {
+      fs.writeFileSync(cachePath, content);
+    } catch (writeErr) {
+      cachePath = path.join('/tmp', 'data-cache.json');
+      fs.writeFileSync(cachePath, content);
+    }
     return res.json({ success: true, message: 'Memória cache salva no servidor com sucesso.' });
   } catch (e: any) {
     console.error('Erro ao salvar cache no servidor:', e);
-    return res.status(500).json({ success: false, error: e.message });
+    return res.status(200).json({ success: false, warning: 'Não foi possível gravar no disco do servidor, dados salvos no cliente.', error: e.message });
   }
 });
 
@@ -1615,13 +1625,14 @@ Elabore um resumo estratégico curto para o dia (3 parágrafos ou seções curta
 
 // START EXPRESS & VITE MIDDLEWARE
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (!process.env.VERCEL) {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -1629,14 +1640,16 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Servidor rodando em http://localhost:${PORT}`);
-    console.log('Environment keys related to Auth/Google/Client:', 
-      Object.keys(process.env).filter(k => 
-        /CLIENT|OAUTH|GOOGLE|AUTH|SECRET|KEY|ID/i.test(k)
-      )
-    );
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Servidor rodando em http://localhost:${PORT}`);
+      console.log('Environment keys related to Auth/Google/Client:', 
+        Object.keys(process.env).filter(k => 
+          /CLIENT|OAUTH|GOOGLE|AUTH|SECRET|KEY|ID/i.test(k)
+        )
+      );
+    });
+  }
 }
 
 export default app;
