@@ -343,15 +343,15 @@ app.get('/api/debug/auth', async (req, res) => {
 });
 
 app.get('/api/auth/me', async (req, res) => {
-  const authClient = getAuthenticatedClient(req);
-  if (!authClient) {
-    return res.json({ isAuthenticated: false, isDemo: true });
-  }
-
   try {
+    const authClient = getAuthenticatedClient(req);
+    if (!authClient) {
+      return res.json({ isAuthenticated: false, isDemo: true });
+    }
+
     const oauth2 = google.oauth2({ version: 'v2', auth: authClient });
     const userInfo = await oauth2.userinfo.get();
-    res.json({
+    return res.json({
       isAuthenticated: true,
       isDemo: false,
       name: userInfo.data.name || 'Usuário Google',
@@ -360,7 +360,7 @@ app.get('/api/auth/me', async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao buscar perfil do usuário:', error);
-    res.json({ isAuthenticated: false, isDemo: true, error: 'Token expirado' });
+    return res.json({ isAuthenticated: false, isDemo: true, error: 'Token expirado ou inválido' });
   }
 });
 
