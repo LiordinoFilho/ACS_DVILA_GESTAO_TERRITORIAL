@@ -1,0 +1,8 @@
+{
+  "name": "ACS D`Vila Gestao Territorial",
+  "description": "Aplicativo de agendamento, rotas e controle de visitas integrado ao Google Contatos, Google Agenda e Google Maps.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

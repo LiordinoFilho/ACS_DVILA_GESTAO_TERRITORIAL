@@ -1,0 +1,24 @@
+{
+  "short_name": "ACS D'Vila",
+  "name": "ACS D'Vila - Gestão de Visitas Domiciliares",
+  "icons": [
+    {
+      "src": "/pwa-icon.jpg",
+      "type": "image/jpeg",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/pwa-icon.jpg",
+      "type": "image/jpeg",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#022c22",
+  "theme_color": "#059669",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Aplicativo PWA para Agentes Comunitários de Saúde com suporte offline e agendamento automático e-SUS."
+}
